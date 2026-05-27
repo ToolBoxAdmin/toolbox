@@ -424,6 +424,22 @@ def create_admin():
         return jsonify({'status': 'Admin creado', 'email': email}), 201
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+@app.route('/api/reset-password-admin', methods=['POST'])
+def reset_password_admin():
+    """SOLO PARA TESTING - resetea password de admin"""
+    try:
+        email = 'manolo@toolbox.mx'
+        password = 'test123'
+        password_hash = hash_password(password)
+        
+        response = supabase.table('users').update({
+            'password_hash': password_hash
+        }).eq('email', email).execute()
+        
+        return jsonify({'status': 'Password reset', 'password': password}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 # ============================================================================
 # RUN
 # ============================================================================

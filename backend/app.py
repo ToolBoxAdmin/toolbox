@@ -401,15 +401,6 @@ def not_found(error):
 def server_error(error):
     return jsonify({'error': '❌ Error interno del servidor'}), 500
 
-# ============================================================================
-# RUN
-# ============================================================================
-
-if __name__ == '__main__':
-    # Debug=True = recarga automático cuando cambias código
-    port = int(os.getenv('PORT', 5000))
-    app.run(debug=True, host='0.0.0.0', port=port)
-
 @app.route('/api/create-admin', methods=['POST'])
 def create_admin():
     """
@@ -433,3 +424,11 @@ def create_admin():
         return jsonify({'status': 'Admin creado', 'email': email}), 201
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+# ============================================================================
+# RUN
+# ============================================================================
+
+if __name__ == '__main__':
+    # Debug=True = recarga automático cuando cambias código
+    port = int(os.getenv('PORT', 5000))
+    app.run(debug=True, host='0.0.0.0', port=port)

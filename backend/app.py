@@ -409,3 +409,27 @@ if __name__ == '__main__':
     # Debug=True = recarga automático cuando cambias código
     port = int(os.getenv('PORT', 5000))
     app.run(debug=True, host='0.0.0.0', port=port)
+
+@app.route('/api/create-admin', methods=['POST'])
+def create_admin():
+    """
+    SOLO para desarrollo - crear un admin de prueba
+    """
+    try:
+        email = 'manolo@toolbox.mx'
+        password = 'test123'
+        
+        # Encriptar contraseña
+        password_hash = hash_password(password)
+        
+        # Crear en BD
+        response = supabase.table('users').insert({
+            'email': email,
+            'password_hash': password_hash,
+            'role': 'admin',
+            'name': 'Manolo'
+        }).execute()
+        
+        return jsonify({'status': 'Admin creado', 'email': email}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500

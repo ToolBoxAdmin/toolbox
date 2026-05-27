@@ -85,11 +85,15 @@ function Header() {
             </a>
           ))}
         </nav>
-        <div className="hidden md:block ml-auto">
-          <a href="#contacto" className="btn-primary">
-            Agendar demo
-          </a>
+        <div className="hidden md:flex gap-3 ml-auto">
+           <a href="/login" className="btn-ghost">
+           Entrar
+           </a>
+           <a href="#contacto" className="btn-primary">
+           Agendar demo
+           </a>
         </div>
+
         <button
           aria-label="Abrir menú"
           onClick={() => setOpen((v) => !v)}
@@ -111,6 +115,9 @@ function Header() {
                 {l.label}
               </a>
             ))}
+            <a href="/login" onClick={() => setOpen(false)} className="btn-ghost mt-2 justify-center">
+              Entrar
+            </a>
             <a href="#contacto" onClick={() => setOpen(false)} className="btn-primary mt-2 justify-center">
               Agendar demo
             </a>

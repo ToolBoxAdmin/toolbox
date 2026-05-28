@@ -15,17 +15,15 @@ export default function Login() {
     setLoading(true);
 
     try {
-      // Intentar login como owner/employee primero (org_id: 3 es test)
-      let response = await fetch(
-        "https://toolbox-backend-rkit.onrender.com/api/login-org",
+      const response = await fetch(
+        "https://toolbox-backend-rkit.onrender.com/api/login",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password, org_id: null }),
+          body: JSON.stringify({ email, password }),
         }
       );
 
-      // Si falla, intentar como admin (solo org)
       if (!response.ok) {
         const data = await response.json();
         setError(data.error || "Email o contraseña incorrecta");
@@ -33,21 +31,11 @@ export default function Login() {
         return;
       }
 
-      if (!response.ok) {
-        const data = await response.json();
-        setError(data.error || "Login fallido");
-        setLoading(false);
-        return;
-      }
-
       const data = await response.json();
-      
-      // Guardar en localStorage
       localStorage.setItem("token", data.token);
       localStorage.setItem("email", data.email);
       localStorage.setItem("role", data.role);
 
-      // Redirigir según rol
       if (data.role === "admin") {
         navigate("/dashboard");
       } else if (data.role === "owner" || data.role === "employee") {

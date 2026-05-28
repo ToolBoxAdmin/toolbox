@@ -25,16 +25,12 @@ export default function Login() {
         }
       );
 
-      // Si falla, intentar como admin
+      // Si falla, intentar como admin (solo org)
       if (!response.ok) {
-        response = await fetch(
-          "https://toolbox-backend-rkit.onrender.com/api/login-admin",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, password }),
-          }
-        );
+        const data = await response.json();
+        setError(data.error || "Email o contraseña incorrecta");
+        setLoading(false);
+        return;
       }
 
       if (!response.ok) {

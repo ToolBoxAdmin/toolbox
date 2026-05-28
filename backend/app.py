@@ -176,7 +176,10 @@ def login_org():
         org_id = data.get('org_id')
         
         # Buscar usuario
-        response = supabase.table('users').select('*').eq('email', email).eq('organization_id', org_id).execute()
+        if org_id:
+            response = supabase.table('users').select('*').eq('email', email).eq('organization_id', org_id).execute()
+        else:
+            response = supabase.table('users').select('*').eq('email', email).execute()
         
         if not response.data:
             return jsonify({'error': '❌ Email o contraseña incorrecta'}), 401

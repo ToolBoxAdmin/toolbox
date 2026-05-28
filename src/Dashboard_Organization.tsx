@@ -209,7 +209,7 @@ export default function Dashboard_Organization() {
         {/* Welcome */}
         <div className="mb-12">
           <h1 className="text-4xl font-bold text-foreground">
-            Bienvenido, {user?.email?.split("@")[0]}
+            Bienvenida, Alexandra
           </h1>
           <p className="mt-2 text-muted-foreground">
             Panel de administración de {data?.org_name}

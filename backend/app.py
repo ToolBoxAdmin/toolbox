@@ -266,6 +266,74 @@ def reset_password():
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
+# ENDPOINT: TRAER TODOS LOS USUARIOS (para dashboard admin)
+# ============================================================================
+
+@app.route('/api/users', methods=['GET'])
+def get_users():
+    try:
+        token = request.headers.get('Authorization', '').split(' ')[-1]
+        payload = verify_token(token)
+
+        if not payload or payload['role'] != 'admin':
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        # Traer todos los usuarios con nombre de org
+        users_response = supabase.table('users').select('id, email, role, name, organization_id').execute()
+        users = users_response.data
+
+        # Agregar nombre de org a cada usuario
+        for user in users:
+            if user['organization_id']:
+                org_res = supabase.table('organizations').select('name').eq('id', user['organization_id']).execute()
+                user['org_name'] = org_res.data[0]['name'] if org_res.data else None
+            else:
+                user['org_name'] = None
+
+        return jsonify({'users': users}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# ENDPOINT: CREAR ORGANIZACIÓN
+# ============================================================================
+
+@app.route('/api/create-org', methods=['POST'])
+def create_org():
+    try:
+        token = request.headers.get('Authorization', '').split(' ')[-1]
+        payload = verify_token(token)
+
+        if not payload or payload['role'] != 'admin':
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        name = data.get('name')
+        plan = data.get('plan', 'basic')
+
+        if not name:
+            return jsonify({'error': 'Nombre requerido'}), 400
+
+        # Crear org sin owner por ahora (se asigna después)
+        response = supabase.table('organizations').insert({
+            'name': name,
+            'plan': plan,
+            'owner_id': payload['user_id']
+        }).execute()
+
+        new_org = response.data[0]
+
+        return jsonify({
+            'org_id': new_org['id'],
+            'name': new_org['name'],
+            'plan': new_org['plan']
+        }), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+# ============================================================================
 # MANEJO DE ERRORES
 # ============================================================================
 

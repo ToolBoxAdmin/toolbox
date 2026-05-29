@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 
 export default function Login() {
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,14 +26,14 @@ export default function Login() {
 
       if (!response.ok) {
         const data = await response.json();
-        setError(data.error || "Email o contraseña incorrecta");
+        setError(data.error || "Usuario o contraseña incorrecta");
         setLoading(false);
         return;
       }
 
       const data = await response.json();
       localStorage.setItem("token", data.token);
-      localStorage.setItem("email", data.email);
+      localStorage.setItem("username", data.username);
       localStorage.setItem("role", data.role);
 
       if (data.role === "admin") {
@@ -75,13 +75,13 @@ export default function Login() {
 
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">
-              Email
+              Usuario
             </label>
             <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="manolo@toolbox.mx"
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="usuario"
               required
               className="w-full rounded-lg border border-border bg-background px-4 py-3 text-foreground placeholder:text-muted-foreground focus:border-[var(--brand-red)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20"
             />

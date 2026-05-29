@@ -82,11 +82,11 @@ def login():
     """
     try:
         data = request.json
-        email = data.get('email')
+        username = data.get("username")
         password = data.get('password')
 
         # Buscar usuario SOLO por email
-        response = supabase.table('users').select('*').eq('email', email).execute()
+        response = supabase.table('users').select('*').eq('username', username).execute()
 
         if not response.data:
             return jsonify({'error': 'Email o contraseña incorrecta'}), 401
@@ -99,12 +99,12 @@ def login():
 
         # Crear token con org_id si aplica
         org_id = user.get('organization_id')
-        token = create_token(user['id'], user['email'], user['role'], org_id)
+        token = create_token(user['id'], user['username'], user['role'], org_id)
 
         return jsonify({
             'token': token,
             'user_id': user['id'],
-            'email': user['email'],
+            'username': user['username'],
             'role': user['role'],
             'org_id': org_id
         }), 200
@@ -129,7 +129,7 @@ def dashboard_admin():
         organizations = orgs_response.data
 
         for org in organizations:
-            users_response = supabase.table('users').select('id').eq('organization_id', org['id']).execute()
+            users_response = supabase.table('users').select('id').eq('org_id', org['id']).execute()
             org['users_count'] = len(users_response.data)
 
         return jsonify({

@@ -42,10 +42,10 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hash: str) -> bool:
     return bcrypt.checkpw(password.encode(), hash.encode())
 
-def create_token(user_id: int, email: str, role: str, org_id: int = None) -> str:
+def create_token(user_id: int, username: str, role: str, org_id: int = None) -> str:
     payload = {
         'user_id': user_id,
-        'email': email,
+        'username': username,
         'role': role,
         'org_id': org_id,
         'iat': datetime.utcnow(),
@@ -78,27 +78,24 @@ def health():
 def login():
     """
     Login universal para todos los roles (admin, owner, employee)
-    Solo necesita email + password
+    Usa username + password
     """
     try:
         data = request.json
-        username = data.get("username")
+        username = data.get('username')
         password = data.get('password')
 
-        # Buscar usuario SOLO por email
         response = supabase.table('users').select('*').eq('username', username).execute()
 
         if not response.data:
-            return jsonify({'error': 'Email o contraseña incorrecta'}), 401
+            return jsonify({'error': 'Usuario o contraseña incorrecta'}), 401
 
         user = response.data[0]
 
-        # Verificar contraseña
         if not verify_password(password, user['password_hash']):
-            return jsonify({'error': 'Email o contraseña incorrecta'}), 401
+            return jsonify({'error': 'Usuario o contraseña incorrecta'}), 401
 
-        # Crear token con org_id si aplica
-        org_id = user.get('organization_id')
+        org_id = user.get('org_id')
         token = create_token(user['id'], user['username'], user['role'], org_id)
 
         return jsonify({
@@ -162,7 +159,7 @@ def dashboard_org():
         if not org:
             return jsonify({'error': 'Organización no encontrada'}), 404
 
-        users_response = supabase.table('users').select('id, email, role, name').eq('organization_id', org_id).execute()
+        users_response = supabase.table('users').select('id, username, role, full_name').eq('org_id', org_id).execute()
         users = users_response.data
 
         return jsonify({
@@ -190,27 +187,27 @@ def create_user():
             return jsonify({'error': 'No tienes permisos'}), 403
 
         data = request.json
-        email = data.get('email')
+        username = data.get('username')
         password = data.get('password')
         role = data.get('role')
-        name = data.get('name', '')
+        full_name = data.get('full_name', '')
         org_id = data.get('org_id') or payload.get('org_id')
 
         password_hash = hash_password(password)
 
         response = supabase.table('users').insert({
-            'email': email,
+            'username': username,
             'password_hash': password_hash,
             'role': role,
-            'organization_id': org_id,
-            'name': name
+            'org_id': org_id,
+            'full_name': full_name
         }).execute()
 
         new_user = response.data[0]
 
         return jsonify({
             'user_id': new_user['id'],
-            'email': new_user['email'],
+            'username': new_user['username'],
             'role': new_user['role']
         }), 201
 
@@ -278,14 +275,12 @@ def get_users():
         if not payload or payload['role'] != 'admin':
             return jsonify({'error': 'No tienes permisos'}), 403
 
-        # Traer todos los usuarios con nombre de org
-        users_response = supabase.table('users').select('id, email, role, name, organization_id').execute()
+        users_response = supabase.table('users').select('id, username, role, full_name, org_id').execute()
         users = users_response.data
 
-        # Agregar nombre de org a cada usuario
         for user in users:
-            if user['organization_id']:
-                org_res = supabase.table('organizations').select('name').eq('id', user['organization_id']).execute()
+            if user['org_id']:
+                org_res = supabase.table('organizations').select('name').eq('id', user['org_id']).execute()
                 user['org_name'] = org_res.data[0]['name'] if org_res.data else None
             else:
                 user['org_name'] = None
@@ -294,7 +289,6 @@ def get_users():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 # ============================================================================
 # ENDPOINT: CREAR ORGANIZACIÓN
@@ -311,16 +305,18 @@ def create_org():
 
         data = request.json
         name = data.get('name')
-        plan = data.get('plan', 'basic')
+        industry = data.get('industry', '')
 
         if not name:
             return jsonify({'error': 'Nombre requerido'}), 400
 
-        # Crear org sin owner por ahora (se asigna después)
+        slug = name.lower().replace(' ', '-')
+
         response = supabase.table('organizations').insert({
             'name': name,
-            'plan': plan,
-            'owner_id': payload['user_id']
+            'slug': slug,
+            'industry': industry,
+            'active': True
         }).execute()
 
         new_org = response.data[0]
@@ -328,11 +324,12 @@ def create_org():
         return jsonify({
             'org_id': new_org['id'],
             'name': new_org['name'],
-            'plan': new_org['plan']
+            'slug': new_org['slug']
         }), 201
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 # ============================================================================
 # MANEJO DE ERRORES
 # ============================================================================

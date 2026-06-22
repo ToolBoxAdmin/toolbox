@@ -92,6 +92,11 @@ def login():
 
         user = response.data[0]
 
+        import sys
+        print(f"DEBUG username: {username}", file=sys.stderr)
+        print(f"DEBUG hash from DB: {user['password_hash']}", file=sys.stderr)
+        print(f"DEBUG verify result: {verify_password(password, user['password_hash'])}", file=sys.stderr)
+
         if not verify_password(password, user['password_hash']):
             return jsonify({'error': 'Usuario o contraseña incorrecta'}), 401
 

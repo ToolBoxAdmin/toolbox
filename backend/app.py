@@ -85,8 +85,12 @@ def login():
         username = data.get('username')
         password = data.get('password')
 
+        print(f"LOGIN ATTEMPT: username={username}", file=sys.stderr, flush=True)
+
         response = supabase.table('users').select('*').eq('username', username).execute()
 
+        print(f"QUERY RESULT: {response.data}", file=sys.stderr, flush=True)
+        
         if not response.data:
             return jsonify({'error': 'Usuario o contraseña incorrecta'}), 401
 

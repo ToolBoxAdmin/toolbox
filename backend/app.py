@@ -12,6 +12,7 @@ import bcrypt
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 import os
+import sys
 
 load_dotenv()
 
@@ -90,13 +91,12 @@ def login():
         response = supabase.table('users').select('*').eq('username', username).execute()
 
         print(f"QUERY RESULT: {response.data}", file=sys.stderr, flush=True)
-        
+
         if not response.data:
             return jsonify({'error': 'Usuario o contraseña incorrecta'}), 401
 
         user = response.data[0]
 
-        import sys
         print(f"DEBUG username: {username}", file=sys.stderr)
         print(f"DEBUG hash from DB: {user['password_hash']}", file=sys.stderr)
         print(f"DEBUG verify result: {verify_password(password, user['password_hash'])}", file=sys.stderr)

@@ -1,42 +1,46 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { 
-    LogOut,
-    Boxes,
-    Loader,
-    Rocket,
-    BookOpen,
-    User,
-    ShoppingCart,
-    Megaphone,
-    BarChart3,
-    DollarSign,
-    Plug,
-    Plus,
-    ChevronLeft,
-    ChevronRight,
-} from "lucide-react";
 import {
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
+  LogOut, Boxes, Loader, Rocket, BookOpen, User,
+  ShoppingCart, Megaphone, BarChart3, DollarSign,
+  Plug, Plus, ChevronLeft, ChevronRight,
+} from "lucide-react";
+
+import DashboardHome from "./pages/DashboardHome";
+import Ventas from "./pages/Ventas";
+import Productos from "./pages/Productos";
+import WorkInProgress from "./pages/WorkInProgress";
+
+type Section =
+  | "dashboard" | "ventas" | "productos" | "inventario"
+  | "clientes" | "pedidos" | "marketing" | "reportes"
+  | "finanzas" | "integraciones";
+
+const TOOLS: { id: Section; name: string; icon: any }[] = [
+  { id: "dashboard",      name: "Dashboard",      icon: Boxes },
+  { id: "ventas",         name: "Ventas",          icon: Rocket },
+  { id: "productos",      name: "Productos",       icon: BookOpen },
+  { id: "inventario",     name: "Inventario",      icon: Boxes },
+  { id: "clientes",       name: "Clientes",        icon: User },
+  { id: "pedidos",        name: "Pedidos",         icon: ShoppingCart },
+  { id: "marketing",      name: "Marketing",       icon: Megaphone },
+  { id: "reportes",       name: "Reportes",        icon: BarChart3 },
+  { id: "finanzas",       name: "Finanzas",        icon: DollarSign },
+  { id: "integraciones",  name: "Integraciones",   icon: Plug },
+];
+
+const WIP_SECTIONS: Section[] = [
+  "inventario", "clientes", "pedidos", "marketing",
+  "reportes", "finanzas", "integraciones",
+];
 
 export default function Dashboard_Organization() {
   const navigate = useNavigate();
   const [user, setUser] = useState<any>(null);
-  const [data, setData] = useState<any>(null);
+  const [orgData, setOrgData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [section, setSection] = useState<Section>("dashboard");
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -48,44 +52,28 @@ export default function Dashboard_Organization() {
       return;
     }
 
-    setUser({ username, role });
+    setUser({ username, role, token });
 
-    const fetchDashboard = async () => {
+    const fetchOrg = async () => {
       try {
-        const response = await fetch(
+        const res = await fetch(
           "https://toolbox-backend-rkit.onrender.com/api/dashboard-org",
-          {
-            method: "GET",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-          }
+          { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
         );
-
-        if (!response.ok) {
-          setError("No autorizado");
-          localStorage.clear();
-          navigate("/login");
-          return;
-        }
-
-        const dashData = await response.json();
-        setData(dashData);
-      } catch (err) {
-        setError("Error al cargar datos");
+        if (!res.ok) { localStorage.clear(); navigate("/login"); return; }
+        const data = await res.json();
+        setOrgData(data);
+      } catch {
+        navigate("/login");
       } finally {
         setLoading(false);
       }
     };
 
-    fetchDashboard();
+    fetchOrg();
   }, [navigate]);
 
-  const handleLogout = () => {
-    localStorage.clear();
-    navigate("/login");
-  };
+  const handleLogout = () => { localStorage.clear(); navigate("/login"); };
 
   if (loading) {
     return (
@@ -95,54 +83,21 @@ export default function Dashboard_Organization() {
     );
   }
 
-  const ventasData = [
-    { mes: "Ene", ventas: 4000, anterior: 2400 },
-    { mes: "Feb", ventas: 3000, anterior: 1398 },
-    { mes: "Mar", ventas: 2000, anterior: 9800 },
-    { mes: "Abr", ventas: 2780, anterior: 3908 },
-    { mes: "May", ventas: 1890, anterior: 4800 },
-    { mes: "Jun", ventas: 2390, anterior: 3800 },
-  ];
-
-  const inventarioData = [
-    { name: "En stock", value: 128 },
-    { name: "Stock bajo", value: 23 },
-    { name: "Agotados", value: 7 },
-  ];
-
-  const canalData = [
-    { name: "Tienda online", value: 45 },
-    { name: "Marketplace", value: 25 },
-    { name: "Tienda física", value: 15 },
-    { name: "Redes sociales", value: 10 },
-    { name: "Otros", value: 5 },
-  ];
-
-  const productos = [
-    { id: 1, nombre: "Producto A", ventas: 8250 },
-    { id: 2, nombre: "Producto B", ventas: 6120 },
-    { id: 3, nombre: "Producto C", ventas: 4890 },
-    { id: 4, nombre: "Producto D", ventas: 3450 },
-    { id: 5, nombre: "Producto E", ventas: 2980 },
-  ];
-
-  const COLORS = ["var(--brand-red)", "#0066CC", "#00CC88", "#FFAA00", "#CC00CC"];
-
-  const tools = [
-    { name: "Dashboard", icon: Boxes },
-    { name: "Ventas", icon: Rocket },
-    { name: "Productos", icon: BookOpen },
-    { name: "Inventario", icon: Boxes },
-    { name: "Clientes", icon: User },
-    { name: "Pedidos", icon: ShoppingCart },
-    { name: "Marketing", icon: Megaphone },
-    { name: "Reportes", icon: BarChart3 },
-    { name: "Finanzas", icon: DollarSign },
-    { name: "Integraciones", icon: Plug },
-  ];
-
   const sidebarWidth = sidebarOpen ? "w-64" : "w-16";
-  const mainMargin = sidebarOpen ? "ml-64" : "ml-16";
+  const mainMargin   = sidebarOpen ? "ml-64" : "ml-16";
+
+  const sectionTitles: Record<Section, string> = {
+    dashboard:     `Bienvenido, ${orgData?.org_name ?? user?.username}`,
+    ventas:        "Ventas",
+    productos:     "Productos",
+    inventario:    "Inventario",
+    clientes:      "Clientes",
+    pedidos:       "Pedidos",
+    marketing:     "Marketing",
+    reportes:      "Reportes",
+    finanzas:      "Finanzas",
+    integraciones: "Integraciones",
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -150,17 +105,11 @@ export default function Dashboard_Organization() {
       {/* Header */}
       <header className="sticky top-0 z-40 w-full border-b border-border/80 bg-background/85 backdrop-blur">
         <div className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
-          <img
-            src="/Logo Transparente.png"
-            alt="ToolBox Logo"
-            style={{ height: "auto", width: "150px" }}
-          />
+          <img src="/Logo Transparente.png" alt="ToolBox" style={{ height: "auto", width: "140px" }} />
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground">{user?.username}</span>
-            <button
-              onClick={handleLogout}
-              className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
-            >
+            <button onClick={handleLogout}
+              className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors">
               <LogOut size={16} />
               Salir
             </button>
@@ -168,59 +117,52 @@ export default function Dashboard_Organization() {
         </div>
       </header>
 
-      {/* Sidebar — contenedor externo con overflow visible para que la flechita no se corte */}
+      {/* Sidebar */}
       <div className={`fixed left-0 top-16 ${sidebarWidth} h-[calc(100vh-64px)] border-r border-border bg-background transition-all duration-300 ease-in-out z-30`}>
-
-        {/* Flechita toggle — fuera del scroll */}
-        <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="absolute -right-3 top-6 z-50 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background shadow-sm hover:bg-muted transition-colors"
-        >
+        <button onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="absolute -right-3 top-6 z-50 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background shadow-sm hover:bg-muted transition-colors">
           {sidebarOpen ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
         </button>
 
-        {/* Contenido del sidebar con scroll */}
         <div className="h-full overflow-y-auto p-3 flex flex-col">
           {sidebarOpen && (
-            <h3 className="text-xs font-semibold uppercase text-muted-foreground mb-4 px-2">
+            <h3 className="text-xs font-semibold uppercase text-muted-foreground mb-4 px-2 tracking-wider">
               Herramientas
             </h3>
           )}
 
-          <nav className="space-y-1">
-            {tools.map((tool) => {
-              const IconComponent = tool.icon;
+          <nav className="space-y-0.5">
+            {TOOLS.map((tool) => {
+              const Icon = tool.icon;
+              const active = section === tool.id;
               return (
-                <button
-                  key={tool.name}
-                  title={!sidebarOpen ? tool.name : undefined}
-                  className={`w-full text-left rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center gap-3 ${
+                <button key={tool.id} title={!sidebarOpen ? tool.name : undefined}
+                  onClick={() => setSection(tool.id)}
+                  className={`w-full text-left rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${
                     sidebarOpen ? "px-4 py-2.5" : "px-0 py-2.5 justify-center"
-                  }`}
-                >
-                  <IconComponent size={18} className="shrink-0" />
+                  } ${active
+                    ? "bg-[var(--tile-red)] text-[var(--brand-red)]"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}>
+                  <Icon size={18} className="shrink-0" />
                   {sidebarOpen && tool.name}
                 </button>
               );
             })}
           </nav>
 
-          <div className="mt-auto border-t border-border pt-3 space-y-1">
-            <button
-              title={!sidebarOpen ? "Agregar herramienta" : undefined}
+          <div className="mt-auto border-t border-border pt-3 space-y-0.5">
+            <button title={!sidebarOpen ? "Agregar herramienta" : undefined}
               className={`w-full text-left rounded-lg text-sm font-medium text-[var(--brand-red)] hover:bg-[var(--tile-red)] transition-colors flex items-center gap-3 ${
                 sidebarOpen ? "px-4 py-2.5" : "px-0 py-2.5 justify-center"
-              }`}
-            >
+              }`}>
               <Plus size={18} className="shrink-0" />
               {sidebarOpen && "Agregar herramienta"}
             </button>
-            <button
-              title={!sidebarOpen ? "Mi perfil" : undefined}
+            <button title={!sidebarOpen ? "Mi perfil" : undefined}
               className={`w-full text-left rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center gap-3 ${
                 sidebarOpen ? "px-4 py-2.5" : "px-0 py-2.5 justify-center"
-              }`}
-            >
+              }`}>
               <User size={18} className="shrink-0" />
               {sidebarOpen && "Mi perfil"}
             </button>
@@ -229,156 +171,40 @@ export default function Dashboard_Organization() {
       </div>
 
       {/* Main Content */}
-      <main className={`${mainMargin} transition-all duration-300 ease-in-out px-6 py-10`}>
+      <main className={`${mainMargin} transition-all duration-300 ease-in-out`}>
+        <div className="px-6 py-8 max-w-7xl mx-auto">
 
-        {/* Welcome */}
-        <div className="mb-10">
-          <h1 className="text-4xl font-bold text-foreground">
-            Bienvenida, {data?.org_name ?? user?.username}
-          </h1>
-          <p className="mt-2 text-muted-foreground">
-            Panel de administración de {data?.org_name}
-          </p>
+          {section !== "dashboard" && (
+            <div className="mb-8">
+              <button onClick={() => setSection("dashboard")}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                Dashboard
+              </button>
+              <span className="text-xs text-muted-foreground mx-1.5">/</span>
+              <span className="text-xs text-foreground font-medium">{sectionTitles[section]}</span>
+            </div>
+          )}
+
+          {section === "dashboard" && (
+            <div className="mb-8">
+              <h1 className="text-3xl font-bold text-foreground">{sectionTitles["dashboard"]}</h1>
+              <p className="mt-1.5 text-muted-foreground text-sm">Panel de administración · {orgData?.org_name}</p>
+            </div>
+          )}
+
+          {section === "dashboard" && user?.token && orgData && (
+            <DashboardHome token={user.token} orgId={orgData.org_id} />
+          )}
+          {section === "ventas" && user?.token && orgData && (
+            <Ventas token={user.token} orgId={orgData.org_id} />
+          )}
+          {section === "productos" && user?.token && orgData && (
+            <Productos token={user.token} orgId={orgData.org_id} />
+          )}
+          {WIP_SECTIONS.includes(section) && (
+            <WorkInProgress section={sectionTitles[section]} />
+          )}
         </div>
-
-        {error && (
-          <div className="rounded-lg bg-[var(--tile-red)] px-4 py-3 text-sm text-[var(--brand-red)] mb-6">
-            {error}
-          </div>
-        )}
-
-        {/* Métricas principales */}
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5 mb-10">
-          {[
-            { label: "Ventas totales", value: "$48,250.00", delta: "↑ 12.5% vs semana anterior" },
-            { label: "Pedidos", value: "342", delta: "↑ 8.1% vs semana anterior" },
-            { label: "Clientes nuevos", value: "28", delta: "↑ 16.3% vs semana anterior" },
-            { label: "Ticket promedio", value: "$141.37", delta: "↑ 5.4% vs semana anterior" },
-            { label: "Utilidad neta", value: "$12,780.50", delta: "↑ 10.2% vs semana anterior" },
-          ].map((metric) => (
-            <div key={metric.label} className="rounded-2xl border border-border bg-background p-6 shadow-sm">
-              <p className="text-sm text-muted-foreground mb-2">{metric.label}</p>
-              <p className="text-3xl font-bold text-foreground">{metric.value}</p>
-              <p className="text-xs text-green-600 mt-2">{metric.delta}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Gráficos fila 1 */}
-        <div className="grid gap-6 mb-10 lg:grid-cols-3">
-          <div className="rounded-2xl border border-border bg-background p-6 shadow-sm lg:col-span-2">
-            <h3 className="text-lg font-semibold text-foreground mb-6">Ventas</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={ventasData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                <XAxis dataKey="mes" stroke="var(--color-muted-foreground)" />
-                <YAxis stroke="var(--color-muted-foreground)" />
-                <Tooltip contentStyle={{ backgroundColor: "var(--color-background)", border: "1px solid var(--color-border)" }} />
-                <Legend />
-                <Line type="monotone" dataKey="ventas" stroke="var(--brand-red)" strokeWidth={2} />
-                <Line type="monotone" dataKey="anterior" stroke="#0066CC" strokeWidth={2} strokeDasharray="5 5" />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-foreground mb-6">Inventario</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie data={inventarioData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={2} dataKey="value">
-                  {inventarioData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="mt-4 space-y-2 text-sm">
-              {inventarioData.map((item, i) => (
-                <div key={i} className="flex justify-between">
-                  <span className="text-muted-foreground">{item.name}</span>
-                  <span className="font-medium text-foreground">{item.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Gráficos fila 2 */}
-        <div className="grid gap-6 lg:grid-cols-2 mb-10">
-          <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-foreground mb-6">Ventas por canal</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie data={canalData} cx="50%" cy="50%" outerRadius={100} paddingAngle={2} dataKey="value" label>
-                  {canalData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value) => `${value}%`} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
-            <h3 className="text-lg font-semibold text-foreground mb-6">Top productos</h3>
-            <div className="space-y-3">
-              {productos.map((prod) => (
-                <div key={prod.id} className="flex items-center gap-3">
-                  <div className="flex-1">
-                    <div className="flex justify-between mb-1">
-                      <span className="text-sm font-medium text-foreground">{prod.nombre}</span>
-                      <span className="text-sm text-muted-foreground">${prod.ventas}</span>
-                    </div>
-                    <div className="w-full bg-muted/50 rounded-full h-2">
-                      <div
-                        className="bg-[var(--brand-red)] h-2 rounded-full"
-                        style={{ width: `${(prod.ventas / 8250) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Tabla de usuarios */}
-        {data?.users && (
-          <div className="rounded-2xl border border-border bg-background overflow-hidden">
-            <div className="px-6 py-4 border-b border-border">
-              <h2 className="text-lg font-semibold text-foreground">
-                Equipo ({data.total_users} miembros)
-              </h2>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-muted/50 border-b border-border">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Usuario</th>
-                    <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Rol</th>
-                    <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Estado</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {data.users.map((usr: any) => (
-                    <tr key={usr.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="px-6 py-4 text-sm font-medium text-foreground">{usr.username}</td>
-                      <td className="px-6 py-4 text-sm text-muted-foreground">
-                        {usr.role === "owner" ? "Dueño" : "Empleado"}
-                      </td>
-                      <td className="px-6 py-4 text-sm">
-                        <span className="inline-flex items-center rounded-full bg-green-100 px-3 py-1 text-sm font-medium text-green-700">
-                          Activo
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );

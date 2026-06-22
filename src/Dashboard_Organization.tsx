@@ -13,12 +13,12 @@ import {
     DollarSign,
     Plug,
     Plus,
+    ChevronLeft,
+    ChevronRight,
 } from "lucide-react";
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
   PieChart,
   Pie,
   Cell,
@@ -36,21 +36,20 @@ export default function Dashboard_Organization() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
-    const email = localStorage.getItem("email");
+    const username = localStorage.getItem("username");
     const role = localStorage.getItem("role");
 
-    // Si no hay token o no es owner, redirige a login
     if (!token || role !== "owner") {
       navigate("/login");
       return;
     }
 
-    setUser({ email, role });
+    setUser({ username, role });
 
-    // Fetch dashboard data
     const fetchDashboard = async () => {
       try {
         const response = await fetch(
@@ -96,7 +95,6 @@ export default function Dashboard_Organization() {
     );
   }
 
-  // Mock data para gráficos (mientras no tengamos datos reales)
   const ventasData = [
     { mes: "Ene", ventas: 4000, anterior: 2400 },
     { mes: "Feb", ventas: 3000, anterior: 1398 },
@@ -104,6 +102,12 @@ export default function Dashboard_Organization() {
     { mes: "Abr", ventas: 2780, anterior: 3908 },
     { mes: "May", ventas: 1890, anterior: 4800 },
     { mes: "Jun", ventas: 2390, anterior: 3800 },
+  ];
+
+  const inventarioData = [
+    { name: "En stock", value: 128 },
+    { name: "Stock bajo", value: 23 },
+    { name: "Agotados", value: 7 },
   ];
 
   const canalData = [
@@ -114,12 +118,6 @@ export default function Dashboard_Organization() {
     { name: "Otros", value: 5 },
   ];
 
-  const inventarioData = [
-    { name: "En stock", value: 128 },
-    { name: "Stock bajo", value: 23 },
-    { name: "Agotados", value: 7 },
-  ];
-
   const productos = [
     { id: 1, nombre: "Producto A", ventas: 8250 },
     { id: 2, nombre: "Producto B", ventas: 6120 },
@@ -128,28 +126,37 @@ export default function Dashboard_Organization() {
     { id: 5, nombre: "Producto E", ventas: 2980 },
   ];
 
-  const COLORS = [
-    "var(--brand-red)",
-    "#0066CC",
-    "#00CC88",
-    "#FFAA00",
-    "#CC00CC",
+  const COLORS = ["var(--brand-red)", "#0066CC", "#00CC88", "#FFAA00", "#CC00CC"];
+
+  const tools = [
+    { name: "Dashboard", icon: Boxes },
+    { name: "Ventas", icon: Rocket },
+    { name: "Productos", icon: BookOpen },
+    { name: "Inventario", icon: Boxes },
+    { name: "Clientes", icon: User },
+    { name: "Pedidos", icon: ShoppingCart },
+    { name: "Marketing", icon: Megaphone },
+    { name: "Reportes", icon: BarChart3 },
+    { name: "Finanzas", icon: DollarSign },
+    { name: "Integraciones", icon: Plug },
   ];
+
+  const sidebarWidth = sidebarOpen ? "w-64" : "w-16";
+  const mainMargin = sidebarOpen ? "ml-64" : "ml-16";
 
   return (
     <div className="min-h-screen bg-background">
+
       {/* Header */}
       <header className="sticky top-0 z-40 w-full border-b border-border/80 bg-background/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-full items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
           <img
             src="/Logo Transparente.png"
             alt="ToolBox Logo"
             style={{ height: "auto", width: "150px" }}
           />
           <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">
-              {user?.email}
-            </span>
+            <span className="text-sm text-muted-foreground">{user?.username}</span>
             <button
               onClick={handleLogout}
               className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
@@ -161,55 +168,73 @@ export default function Dashboard_Organization() {
         </div>
       </header>
 
-      {/* Sidebar */}
-        <div className="fixed left-0 top-16 w-64 h-[calc(100vh-64px)] border-r border-border bg-background overflow-y-auto">
-        <div className="p-6 flex flex-col h-full">
-            <h3 className="text-xs font-semibold uppercase text-muted-foreground mb-4">Herramientas</h3>
-            <nav className="space-y-2">
-            {[
-                { name: "Dashboard", icon: Boxes },
-                { name: "Ventas", icon: Rocket },
-                { name: "Productos", icon: BookOpen },
-                { name: "Inventario", icon: Boxes },
-                { name: "Clientes", icon: User },
-                { name: "Pedidos", icon: ShoppingCart },
-                { name: "Marketing", icon: Megaphone },
-                { name: "Reportes", icon: BarChart3 },
-                { name: "Finanzas", icon: DollarSign },
-                { name: "Integraciones", icon: Plug },
+      {/* Sidebar — contenedor externo con overflow visible para que la flechita no se corte */}
+      <div className={`fixed left-0 top-16 ${sidebarWidth} h-[calc(100vh-64px)] border-r border-border bg-background transition-all duration-300 ease-in-out z-30`}>
 
-            ].map((tool) => {
-            const IconComponent = tool.icon;
-            return (
+        {/* Flechita toggle — fuera del scroll */}
+        <button
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="absolute -right-3 top-6 z-50 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background shadow-sm hover:bg-muted transition-colors"
+        >
+          {sidebarOpen ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
+        </button>
+
+        {/* Contenido del sidebar con scroll */}
+        <div className="h-full overflow-y-auto p-3 flex flex-col">
+          {sidebarOpen && (
+            <h3 className="text-xs font-semibold uppercase text-muted-foreground mb-4 px-2">
+              Herramientas
+            </h3>
+          )}
+
+          <nav className="space-y-1">
+            {tools.map((tool) => {
+              const IconComponent = tool.icon;
+              return (
                 <button
-                key={tool.name}
-                className="w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center gap-3"
+                  key={tool.name}
+                  title={!sidebarOpen ? tool.name : undefined}
+                  className={`w-full text-left rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center gap-3 ${
+                    sidebarOpen ? "px-4 py-2.5" : "px-0 py-2.5 justify-center"
+                  }`}
                 >
-                <IconComponent size={18} />
-                {tool.name}
+                  <IconComponent size={18} className="shrink-0" />
+                  {sidebarOpen && tool.name}
                 </button>
-            );
+              );
             })}
-            </nav>
-            <div className="mt-auto space-y-2 border-t border-border pt-4">
-            <button className="w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium text-[var(--brand-red)] hover:bg-[var(--tile-red)] transition-colors flex items-center gap-3">
-                <Plus size={18} />
-                Agregar herramienta
+          </nav>
+
+          <div className="mt-auto border-t border-border pt-3 space-y-1">
+            <button
+              title={!sidebarOpen ? "Agregar herramienta" : undefined}
+              className={`w-full text-left rounded-lg text-sm font-medium text-[var(--brand-red)] hover:bg-[var(--tile-red)] transition-colors flex items-center gap-3 ${
+                sidebarOpen ? "px-4 py-2.5" : "px-0 py-2.5 justify-center"
+              }`}
+            >
+              <Plus size={18} className="shrink-0" />
+              {sidebarOpen && "Agregar herramienta"}
             </button>
-            <button className="w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center gap-3">
-                <User size={18} />
-                Mi perfil
+            <button
+              title={!sidebarOpen ? "Mi perfil" : undefined}
+              className={`w-full text-left rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center gap-3 ${
+                sidebarOpen ? "px-4 py-2.5" : "px-0 py-2.5 justify-center"
+              }`}
+            >
+              <User size={18} className="shrink-0" />
+              {sidebarOpen && "Mi perfil"}
             </button>
-            </div>
+          </div>
         </div>
-        </div>
+      </div>
 
       {/* Main Content */}
-      <main className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+      <main className={`${mainMargin} transition-all duration-300 ease-in-out px-6 py-10`}>
+
         {/* Welcome */}
-        <div className="mb-12">
+        <div className="mb-10">
           <h1 className="text-4xl font-bold text-foreground">
-            Bienvenida, Alexandra
+            Bienvenida, {data?.org_name ?? user?.username}
           </h1>
           <p className="mt-2 text-muted-foreground">
             Panel de administración de {data?.org_name}
@@ -223,47 +248,30 @@ export default function Dashboard_Organization() {
         )}
 
         {/* Métricas principales */}
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5 mb-12">
-          <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
-            <p className="text-sm text-muted-foreground mb-2">Ventas totales</p>
-            <p className="text-3xl font-bold text-foreground">$48,250.00</p>
-            <p className="text-xs text-green-600 mt-2">↑ 12.5% vs semana anterior</p>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
-            <p className="text-sm text-muted-foreground mb-2">Pedidos</p>
-            <p className="text-3xl font-bold text-foreground">342</p>
-            <p className="text-xs text-green-600 mt-2">↑ 8.1% vs semana anterior</p>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
-            <p className="text-sm text-muted-foreground mb-2">Clientes nuevos</p>
-            <p className="text-3xl font-bold text-foreground">28</p>
-            <p className="text-xs text-green-600 mt-2">↑ 16.3% vs semana anterior</p>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
-            <p className="text-sm text-muted-foreground mb-2">Ticket promedio</p>
-            <p className="text-3xl font-bold text-foreground">$141.37</p>
-            <p className="text-xs text-green-600 mt-2">↑ 5.4% vs semana anterior</p>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
-            <p className="text-sm text-muted-foreground mb-2">Utilidad neta</p>
-            <p className="text-3xl font-bold text-foreground">$12,780.50</p>
-            <p className="text-xs text-green-600 mt-2">↑ 10.2% vs semana anterior</p>
-          </div>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5 mb-10">
+          {[
+            { label: "Ventas totales", value: "$48,250.00", delta: "↑ 12.5% vs semana anterior" },
+            { label: "Pedidos", value: "342", delta: "↑ 8.1% vs semana anterior" },
+            { label: "Clientes nuevos", value: "28", delta: "↑ 16.3% vs semana anterior" },
+            { label: "Ticket promedio", value: "$141.37", delta: "↑ 5.4% vs semana anterior" },
+            { label: "Utilidad neta", value: "$12,780.50", delta: "↑ 10.2% vs semana anterior" },
+          ].map((metric) => (
+            <div key={metric.label} className="rounded-2xl border border-border bg-background p-6 shadow-sm">
+              <p className="text-sm text-muted-foreground mb-2">{metric.label}</p>
+              <p className="text-3xl font-bold text-foreground">{metric.value}</p>
+              <p className="text-xs text-green-600 mt-2">{metric.delta}</p>
+            </div>
+          ))}
         </div>
 
-        {/* Gráficos */}
-        <div className="grid gap-6 mb-12 lg:grid-cols-3">
-          {/* Ventas */}
+        {/* Gráficos fila 1 */}
+        <div className="grid gap-6 mb-10 lg:grid-cols-3">
           <div className="rounded-2xl border border-border bg-background p-6 shadow-sm lg:col-span-2">
             <h3 className="text-lg font-semibold text-foreground mb-6">Ventas</h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={ventasData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                <XAxis stroke="var(--color-muted-foreground)" />
+                <XAxis dataKey="mes" stroke="var(--color-muted-foreground)" />
                 <YAxis stroke="var(--color-muted-foreground)" />
                 <Tooltip contentStyle={{ backgroundColor: "var(--color-background)", border: "1px solid var(--color-border)" }} />
                 <Legend />
@@ -273,21 +281,12 @@ export default function Dashboard_Organization() {
             </ResponsiveContainer>
           </div>
 
-          {/* Inventario */}
           <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-foreground mb-6">Inventario</h3>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
-                <Pie
-                  data={inventarioData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={2}
-                  dataKey="value"
-                >
-                  {inventarioData.map((entry, index) => (
+                <Pie data={inventarioData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={2} dataKey="value">
+                  {inventarioData.map((_, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
@@ -305,23 +304,14 @@ export default function Dashboard_Organization() {
           </div>
         </div>
 
-        {/* Ventas por canal y Productos */}
-        <div className="grid gap-6 lg:grid-cols-2 mb-12">
-          {/* Ventas por canal */}
+        {/* Gráficos fila 2 */}
+        <div className="grid gap-6 lg:grid-cols-2 mb-10">
           <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-foreground mb-6">Ventas por canal</h3>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
-                <Pie
-                  data={canalData}
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={100}
-                  paddingAngle={2}
-                  dataKey="value"
-                  label
-                >
-                  {canalData.map((entry, index) => (
+                <Pie data={canalData} cx="50%" cy="50%" outerRadius={100} paddingAngle={2} dataKey="value" label>
+                  {canalData.map((_, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
@@ -330,11 +320,10 @@ export default function Dashboard_Organization() {
             </ResponsiveContainer>
           </div>
 
-          {/* Top productos */}
           <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
             <h3 className="text-lg font-semibold text-foreground mb-6">Top productos</h3>
             <div className="space-y-3">
-              {productos.map((prod, i) => (
+              {productos.map((prod) => (
                 <div key={prod.id} className="flex items-center gap-3">
                   <div className="flex-1">
                     <div className="flex justify-between mb-1">
@@ -366,23 +355,15 @@ export default function Dashboard_Organization() {
               <table className="w-full">
                 <thead className="bg-muted/50 border-b border-border">
                   <tr>
-                    <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">
-                      Email
-                    </th>
-                    <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">
-                      Rol
-                    </th>
-                    <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">
-                      Estado
-                    </th>
+                    <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Usuario</th>
+                    <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Rol</th>
+                    <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Estado</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {data.users.map((usr: any) => (
                     <tr key={usr.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="px-6 py-4 text-sm font-medium text-foreground">
-                        {usr.email}
-                      </td>
+                      <td className="px-6 py-4 text-sm font-medium text-foreground">{usr.username}</td>
                       <td className="px-6 py-4 text-sm text-muted-foreground">
                         {usr.role === "owner" ? "Dueño" : "Empleado"}
                       </td>

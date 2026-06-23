@@ -427,6 +427,40 @@ def get_ventas():
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
+# ENDPOINT: VENTAS — ITEMS DE UNA VENTA
+# ============================================================================
+
+@app.route('/api/ventas/<sale_id>/items', methods=['GET'])
+def get_venta_items(sale_id):
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        res = supabase.table('sale_items') \
+            .select('quantity, unit_price, subtotal, product_id') \
+            .eq('sale_id', sale_id) \
+            .execute()
+
+        items = res.data
+        product_ids = [i['product_id'] for i in items]
+
+        prods_res = supabase.table('products') \
+            .select('id, name') \
+            .in_('id', product_ids) \
+            .execute()
+
+        name_map = {p['id']: p['name'] for p in prods_res.data}
+
+        for item in items:
+            item['product_name'] = name_map.get(item['product_id'], 'Producto')
+
+        return jsonify({'items': items}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
 # ENDPOINT: VENTAS — CREAR
 # ============================================================================
 

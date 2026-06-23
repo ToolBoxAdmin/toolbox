@@ -81,8 +81,10 @@ function getRange(period: Period, custom: PeriodRange): PeriodRange {
 }
 
 function getPreviousRange(range: PeriodRange): PeriodRange {
+  if (!range.start || !range.end) return { start: "", end: "" };
   const start = new Date(range.start);
   const end = new Date(range.end);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return { start: "", end: "" };
   const diff = end.getTime() - start.getTime();
   const prevEnd = new Date(start.getTime() - 1);
   const prevStart = new Date(prevEnd.getTime() - diff);
@@ -159,7 +161,11 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
   const prevRange = getPreviousRange(range);
 
   const fetchData = useCallback(async () => {
-    if (period === "custom" && (!custom.start || !custom.end)) return;
+    if (period === "custom" && (!custom.start || !custom.end)) {
+      setLoading(false);
+      return;
+    }
+  
     setLoading(true);
     setError("");
 

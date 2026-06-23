@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus, X, ChevronDown } from "lucide-react";
+import { Plus, X, ChevronDown, ChevronUp } from "lucide-react";
 
-// ─── Tipos ───────────────────────────────────────────────────
 interface VentasProps {
   token: string;
   orgId: number;
@@ -20,7 +19,14 @@ interface Venta {
   total_amount: number;
   payment_method: string;
   status: string;
-  items_count?: number;
+}
+
+interface VentaItem {
+  product_id: number;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  subtotal: number;
 }
 
 interface Producto {
@@ -37,7 +43,6 @@ interface SaleItemForm {
   unit_price: number;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────
 function getRange(period: Period, custom: PeriodRange): PeriodRange {
   const today = new Date();
   const fmt = (d: Date) => d.toISOString().split("T")[0];
@@ -81,7 +86,6 @@ const PAYMENT_LABELS: Record<string, string> = {
   transferencia: "Transferencia",
 };
 
-// ─── Componente principal ─────────────────────────────────────
 export default function Ventas({ token, orgId }: VentasProps) {
   const [period, setPeriod] = useState<Period>("month");
   const [custom, setCustom] = useState<PeriodRange>({ start: "", end: "" });
@@ -90,6 +94,11 @@ export default function Ventas({ token, orgId }: VentasProps) {
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Desglose expandible
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [ventaItems, setVentaItems] = useState<Record<string, VentaItem[]>>({});
+  const [loadingItems, setLoadingItems] = useState<string | null>(null);
 
   // Modal nueva venta
   const [showModal, setShowModal] = useState(false);
@@ -102,9 +111,11 @@ export default function Ventas({ token, orgId }: VentasProps) {
   const range = getRange(period, custom);
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 
-  // ── Fetch ventas ──
   const fetchVentas = useCallback(async () => {
-    if (period === "custom" && (!custom.start || !custom.end)) return;
+    if (period === "custom" && (!custom.start || !custom.end)) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -113,6 +124,8 @@ export default function Ventas({ token, orgId }: VentasProps) {
       if (!res.ok) throw new Error();
       const data = await res.json();
       setVentas(data.ventas);
+      setExpandedId(null);
+      setVentaItems({});
     } catch {
       setError("No se pudieron cargar las ventas.");
     } finally {
@@ -122,7 +135,30 @@ export default function Ventas({ token, orgId }: VentasProps) {
 
   useEffect(() => { fetchVentas(); }, [fetchVentas]);
 
-  // ── Fetch productos para el modal ──
+  // ── Toggle desglose ──
+  const toggleDesglose = async (ventaId: string) => {
+    if (expandedId === ventaId) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(ventaId);
+    if (ventaItems[ventaId]) return; // ya cargado
+
+    setLoadingItems(ventaId);
+    try {
+      const res = await fetch(
+        `https://toolbox-backend-rkit.onrender.com/api/ventas/${ventaId}/items`,
+        { headers }
+      );
+      const data = await res.json();
+      setVentaItems((prev) => ({ ...prev, [ventaId]: data.items }));
+    } catch {
+      setVentaItems((prev) => ({ ...prev, [ventaId]: [] }));
+    } finally {
+      setLoadingItems(null);
+    }
+  };
+
   const openModal = async () => {
     setShowModal(true);
     setItems([]);
@@ -137,22 +173,15 @@ export default function Ventas({ token, orgId }: VentasProps) {
     }
   };
 
-  // ── Agregar item al carrito ──
   const addItem = (prod: Producto) => {
     setItems((prev) => {
       const exists = prev.find((i) => i.product_id === prod.id);
-      if (exists) {
-        return prev.map((i) =>
-          i.product_id === prod.id ? { ...i, quantity: i.quantity + 1 } : i
-        );
-      }
+      if (exists) return prev.map((i) => i.product_id === prod.id ? { ...i, quantity: i.quantity + 1 } : i);
       return [...prev, { product_id: prod.id, product_name: prod.name, quantity: 1, unit_price: prod.unit_price }];
     });
   };
 
-  const removeItem = (productId: number) => {
-    setItems((prev) => prev.filter((i) => i.product_id !== productId));
-  };
+  const removeItem = (productId: number) => setItems((prev) => prev.filter((i) => i.product_id !== productId));
 
   const updateQty = (productId: number, qty: number) => {
     if (qty <= 0) { removeItem(productId); return; }
@@ -161,7 +190,6 @@ export default function Ventas({ token, orgId }: VentasProps) {
 
   const total = items.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
 
-  // ── Registrar venta ──
   const submitVenta = async () => {
     if (items.length === 0) { setSubmitError("Agrega al menos un producto."); return; }
     setSubmitting(true);
@@ -193,7 +221,7 @@ export default function Ventas({ token, orgId }: VentasProps) {
 
   return (
     <div>
-      {/* ── Header de sección ── */}
+      {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-2xl font-bold text-foreground">Ventas</h2>
@@ -201,27 +229,21 @@ export default function Ventas({ token, orgId }: VentasProps) {
             {range.start === range.end ? range.start : `${range.start} — ${range.end}`}
           </p>
         </div>
-        <button
-          onClick={openModal}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity"
-        >
+        <button onClick={openModal}
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity">
           <Plus size={16} />
           Nueva venta
         </button>
       </div>
 
-      {/* ── Filtros ── */}
+      {/* Filtros */}
       <div className="flex flex-wrap items-center gap-2 mb-6">
         {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
-          <button
-            key={p}
+          <button key={p}
             onClick={() => { setPeriod(p); setShowCustom(p === "custom"); }}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              period === p
-                ? "bg-[var(--brand-red)] text-white"
-                : "border border-border text-muted-foreground hover:bg-muted"
-            }`}
-          >
+              period === p ? "bg-[var(--brand-red)] text-white" : "border border-border text-muted-foreground hover:bg-muted"
+            }`}>
             {PERIOD_LABELS[p]}
           </button>
         ))}
@@ -246,7 +268,7 @@ export default function Ventas({ token, orgId }: VentasProps) {
         </div>
       )}
 
-      {/* ── Métricas rápidas ── */}
+      {/* Métricas rápidas */}
       {!loading && (
         <div className="grid gap-4 md:grid-cols-3 mb-6">
           {[
@@ -262,17 +284,17 @@ export default function Ventas({ token, orgId }: VentasProps) {
         </div>
       )}
 
-      {/* ── Error ── */}
       {error && (
         <div className="rounded-lg bg-[var(--tile-red)] px-4 py-3 text-sm text-[var(--brand-red)] mb-6">{error}</div>
       )}
 
-      {/* ── Tabla de ventas ── */}
+      {/* Tabla de ventas */}
       <div className="rounded-2xl border border-border bg-background overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-muted/50 border-b border-border">
               <tr>
+                <th className="px-4 py-3 w-8"></th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">ID</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Fecha</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Total</th>
@@ -284,7 +306,7 @@ export default function Ventas({ token, orgId }: VentasProps) {
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i}>
-                    {Array.from({ length: 5 }).map((_, j) => (
+                    {Array.from({ length: 6 }).map((_, j) => (
                       <td key={j} className="px-6 py-4">
                         <div className="h-4 bg-muted rounded animate-pulse" />
                       </td>
@@ -293,25 +315,66 @@ export default function Ventas({ token, orgId }: VentasProps) {
                 ))
               ) : ventas.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={6} className="px-6 py-12 text-center text-sm text-muted-foreground">
                     Sin ventas en este periodo.
                   </td>
                 </tr>
               ) : (
                 ventas.map((v) => {
                   const st = STATUS_LABELS[v.status] ?? { label: v.status, color: "bg-muted text-muted-foreground" };
+                  const isExpanded = expandedId === v.id;
+                  const isLoadingThis = loadingItems === v.id;
+                  const itemsDeVenta = ventaItems[v.id] ?? [];
+
                   return (
-                    <tr key={v.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="px-6 py-4 text-sm font-mono text-muted-foreground">{v.id}</td>
-                      <td className="px-6 py-4 text-sm text-foreground">{formatDate(v.sale_date)}</td>
-                      <td className="px-6 py-4 text-sm font-semibold text-foreground">{formatCurrency(v.total_amount)}</td>
-                      <td className="px-6 py-4 text-sm text-muted-foreground">{PAYMENT_LABELS[v.payment_method] ?? v.payment_method}</td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${st.color}`}>
-                          {st.label}
-                        </span>
-                      </td>
-                    </tr>
+                    <>
+                      <tr
+                        key={v.id}
+                        onClick={() => toggleDesglose(v.id)}
+                        className="hover:bg-muted/30 transition-colors cursor-pointer"
+                      >
+                        <td className="px-4 py-4 text-muted-foreground">
+                          {isExpanded
+                            ? <ChevronUp size={14} />
+                            : <ChevronDown size={14} />
+                          }
+                        </td>
+                        <td className="px-6 py-4 text-sm font-mono text-muted-foreground">{v.id}</td>
+                        <td className="px-6 py-4 text-sm text-foreground">{formatDate(v.sale_date)}</td>
+                        <td className="px-6 py-4 text-sm font-semibold text-foreground">{formatCurrency(v.total_amount)}</td>
+                        <td className="px-6 py-4 text-sm text-muted-foreground">{PAYMENT_LABELS[v.payment_method] ?? v.payment_method}</td>
+                        <td className="px-6 py-4">
+                          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${st.color}`}>
+                            {st.label}
+                          </span>
+                        </td>
+                      </tr>
+
+                      {/* Desglose expandible */}
+                      {isExpanded && (
+                        <tr key={`${v.id}-items`} className="bg-muted/20">
+                          <td colSpan={6} className="px-8 py-3">
+                            {isLoadingThis ? (
+                              <p className="text-xs text-muted-foreground py-2">Cargando productos...</p>
+                            ) : itemsDeVenta.length === 0 ? (
+                              <p className="text-xs text-muted-foreground py-2">Sin detalle disponible.</p>
+                            ) : (
+                              <div className="space-y-1.5 py-1">
+                                {itemsDeVenta.map((item, i) => (
+                                  <div key={i} className="flex items-center justify-between text-sm">
+                                    <span className="text-foreground">
+                                      <span className="text-muted-foreground mr-2">{item.quantity}×</span>
+                                      {item.product_name}
+                                    </span>
+                                    <span className="font-medium text-foreground">{formatCurrency(item.subtotal)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   );
                 })
               )}
@@ -320,11 +383,10 @@ export default function Ventas({ token, orgId }: VentasProps) {
         </div>
       </div>
 
-      {/* ── Modal nueva venta ── */}
+      {/* Modal nueva venta */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
           <div className="w-full max-w-2xl bg-background rounded-2xl border border-border shadow-xl overflow-hidden">
-            {/* Header modal */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
               <h3 className="text-lg font-semibold text-foreground">Nueva venta</h3>
               <button onClick={() => setShowModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -333,28 +395,20 @@ export default function Ventas({ token, orgId }: VentasProps) {
             </div>
 
             <div className="p-6 max-h-[70vh] overflow-y-auto">
-              {/* Selector de productos */}
               <p className="text-sm font-medium text-foreground mb-3">Agregar productos</p>
               <div className="grid grid-cols-2 gap-2 mb-6">
                 {productos.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => addItem(p)}
-                    disabled={p.stock_current === 0}
-                    className="flex items-center justify-between text-left px-3 py-2.5 rounded-xl border border-border hover:border-[var(--brand-red)] hover:bg-[var(--tile-red)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
+                  <button key={p.id} onClick={() => addItem(p)} disabled={p.stock_current === 0}
+                    className="flex items-center justify-between text-left px-3 py-2.5 rounded-xl border border-border hover:border-[var(--brand-red)] hover:bg-[var(--tile-red)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
                     <div>
                       <p className="text-sm font-medium text-foreground leading-tight">{p.name}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">Stock: {p.stock_current}</p>
                     </div>
-                    <span className="text-sm font-semibold text-[var(--brand-red)] ml-2 shrink-0">
-                      {formatCurrency(p.unit_price)}
-                    </span>
+                    <span className="text-sm font-semibold text-[var(--brand-red)] ml-2 shrink-0">{formatCurrency(p.unit_price)}</span>
                   </button>
                 ))}
               </div>
 
-              {/* Items seleccionados */}
               {items.length > 0 && (
                 <div className="mb-6">
                   <p className="text-sm font-medium text-foreground mb-3">Resumen</p>
@@ -369,17 +423,13 @@ export default function Ventas({ token, orgId }: VentasProps) {
                           <button onClick={() => updateQty(item.product_id, item.quantity + 1)}
                             className="w-6 h-6 rounded-full border border-border flex items-center justify-center text-foreground hover:bg-muted transition-colors text-sm">+</button>
                         </div>
-                        <span className="text-sm font-semibold text-foreground w-20 text-right">
-                          {formatCurrency(item.unit_price * item.quantity)}
-                        </span>
+                        <span className="text-sm font-semibold text-foreground w-20 text-right">{formatCurrency(item.unit_price * item.quantity)}</span>
                         <button onClick={() => removeItem(item.product_id)} className="text-muted-foreground hover:text-red-500 transition-colors">
                           <X size={14} />
                         </button>
                       </div>
                     ))}
                   </div>
-
-                  {/* Total */}
                   <div className="flex justify-between items-center mt-4 pt-4 border-t border-border">
                     <span className="text-base font-semibold text-foreground">Total</span>
                     <span className="text-xl font-bold text-foreground">{formatCurrency(total)}</span>
@@ -387,15 +437,11 @@ export default function Ventas({ token, orgId }: VentasProps) {
                 </div>
               )}
 
-              {/* Método de pago */}
               <div className="mb-4">
                 <label className="text-sm font-medium text-foreground mb-2 block">Método de pago</label>
                 <div className="relative">
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
-                    className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background appearance-none focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)]"
-                  >
+                  <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}
+                    className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background appearance-none focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)]">
                     <option value="efectivo">Efectivo</option>
                     <option value="tarjeta">Tarjeta</option>
                     <option value="transferencia">Transferencia</option>
@@ -409,17 +455,13 @@ export default function Ventas({ token, orgId }: VentasProps) {
               )}
             </div>
 
-            {/* Footer modal */}
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
               <button onClick={() => setShowModal(false)}
                 className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
                 Cancelar
               </button>
-              <button
-                onClick={submitVenta}
-                disabled={submitting || items.length === 0}
-                className="px-5 py-2.5 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
+              <button onClick={submitVenta} disabled={submitting || items.length === 0}
+                className="px-5 py-2.5 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
                 {submitting ? "Registrando..." : `Registrar — ${formatCurrency(total)}`}
               </button>
             </div>

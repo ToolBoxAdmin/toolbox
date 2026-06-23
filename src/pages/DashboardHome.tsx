@@ -14,13 +14,12 @@ import {
 } from "recharts";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 
-// ─── Tipos ───────────────────────────────────────────────────
 interface DashboardHomeProps {
   token: string;
   orgId: number;
 }
 
-type Period = "today" | "week" | "month" | "year" | "custom";
+type Period = "today" | "week" | "month" | "year" | "all" | "custom";
 
 interface PeriodRange {
   start: string;
@@ -54,7 +53,6 @@ interface InventarioItem {
   value: number;
 }
 
-// ─── Helpers de fecha ────────────────────────────────────────
 function getRange(period: Period, custom: PeriodRange): PeriodRange {
   const today = new Date();
   const fmt = (d: Date) => d.toISOString().split("T")[0];
@@ -70,12 +68,13 @@ function getRange(period: Period, custom: PeriodRange): PeriodRange {
     return { start: fmt(monday), end: fmt(today) };
   }
   if (period === "month") {
-    const start = new Date(today.getFullYear(), today.getMonth(), 1);
-    return { start: fmt(start), end: fmt(today) };
+    return { start: fmt(new Date(today.getFullYear(), today.getMonth(), 1)), end: fmt(today) };
   }
   if (period === "year") {
-    const start = new Date(today.getFullYear(), 0, 1);
-    return { start: fmt(start), end: fmt(today) };
+    return { start: fmt(new Date(today.getFullYear(), 0, 1)), end: fmt(today) };
+  }
+  if (period === "all") {
+    return { start: "2020-01-01", end: fmt(today) };
   }
   return custom;
 }
@@ -113,38 +112,25 @@ const PERIOD_LABELS: Record<Period, string> = {
   week: "Esta semana",
   month: "Este mes",
   year: "Este año",
+  all: "Todo",
   custom: "Personalizado",
 };
 
-// ─── Componente delta ─────────────────────────────────────────
 function Delta({ current, previous }: { current: number; previous: number }) {
   const pct = formatPct(current, previous);
   if (pct === null) return null;
   const up = pct > 0;
   const zero = pct === 0;
   return (
-    <span
-      className={`inline-flex items-center gap-1 text-xs font-medium mt-1 ${
-        zero
-          ? "text-muted-foreground"
-          : up
-          ? "text-emerald-600"
-          : "text-red-500"
-      }`}
-    >
-      {zero ? (
-        <Minus size={12} />
-      ) : up ? (
-        <TrendingUp size={12} />
-      ) : (
-        <TrendingDown size={12} />
-      )}
+    <span className={`inline-flex items-center gap-1 text-xs font-medium mt-1 ${
+      zero ? "text-muted-foreground" : up ? "text-emerald-600" : "text-red-500"
+    }`}>
+      {zero ? <Minus size={12} /> : up ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
       {Math.abs(pct).toFixed(1)}% vs periodo anterior
     </span>
   );
 }
 
-// ─── Componente principal ────────────────────────────────────
 export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
   const [period, setPeriod] = useState<Period>("month");
   const [custom, setCustom] = useState<PeriodRange>({ start: "", end: "" });
@@ -165,7 +151,7 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
       setLoading(false);
       return;
     }
-  
+
     setLoading(true);
     setError("");
 
@@ -223,7 +209,7 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
 
   return (
     <div>
-      {/* ── Filtros de periodo ── */}
+      {/* Filtros de periodo */}
       <div className="flex flex-wrap items-center gap-2 mb-8">
         {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
           <button
@@ -244,7 +230,7 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
         <span className="text-xs text-muted-foreground ml-2">{rangeLabel}</span>
       </div>
 
-      {/* ── Date picker custom ── */}
+      {/* Date picker custom */}
       {showCustom && (
         <div className="flex items-center gap-3 mb-8 p-4 rounded-xl border border-border bg-background">
           <div className="flex flex-col gap-1">
@@ -274,14 +260,14 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
         </div>
       )}
 
-      {/* ── Error ── */}
+      {/* Error */}
       {error && (
         <div className="rounded-lg bg-[var(--tile-red)] px-4 py-3 text-sm text-[var(--brand-red)] mb-6">
           {error}
         </div>
       )}
 
-      {/* ── Skeleton / Loading ── */}
+      {/* Loading */}
       {loading ? (
         <div className="grid gap-6 md:grid-cols-3 mb-10">
           {[1, 2, 3].map((i) => (
@@ -293,13 +279,11 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
         </div>
       ) : metrics ? (
         <>
-          {/* ── Métricas ── */}
+          {/* Métricas */}
           <div className="grid gap-6 md:grid-cols-3 mb-10">
             <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
               <p className="text-sm text-muted-foreground mb-1">Ventas totales</p>
-              <p className="text-3xl font-bold text-foreground">
-                {formatCurrency(metrics.ventas_totales)}
-              </p>
+              <p className="text-3xl font-bold text-foreground">{formatCurrency(metrics.ventas_totales)}</p>
               <Delta current={metrics.ventas_totales} previous={metrics.ventas_totales_anterior} />
             </div>
             <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
@@ -309,20 +293,15 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
             </div>
             <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
               <p className="text-sm text-muted-foreground mb-1">Ticket promedio</p>
-              <p className="text-3xl font-bold text-foreground">
-                {formatCurrency(metrics.ticket_promedio)}
-              </p>
+              <p className="text-3xl font-bold text-foreground">{formatCurrency(metrics.ticket_promedio)}</p>
               <Delta current={metrics.ticket_promedio} previous={metrics.ticket_promedio_anterior} />
             </div>
           </div>
 
-          {/* ── Gráficas fila 1 ── */}
+          {/* Gráficas fila 1 */}
           <div className="grid gap-6 mb-10 lg:grid-cols-3">
-            {/* Ventas por mes */}
             <div className="rounded-2xl border border-border bg-background p-6 shadow-sm lg:col-span-2">
-              <h3 className="text-base font-semibold text-foreground mb-6">
-                Ventas por mes
-              </h3>
+              <h3 className="text-base font-semibold text-foreground mb-6">Ventas por mes</h3>
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={ventasChart}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
@@ -330,7 +309,7 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
                   <YAxis stroke="var(--color-muted-foreground)" fontSize={12} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                   <Tooltip
                     contentStyle={{ backgroundColor: "var(--color-background)", border: "1px solid var(--color-border)", borderRadius: "8px" }}
-                    formatter={(v: number) => formatCurrency(v)}
+                    formatter={(v: any) => formatCurrency(Number(v))}
                   />
                   <Legend />
                   <Line type="monotone" dataKey="ventas" name="Este periodo" stroke="var(--brand-red)" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} />
@@ -339,7 +318,6 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
               </ResponsiveContainer>
             </div>
 
-            {/* Inventario */}
             <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
               <h3 className="text-base font-semibold text-foreground mb-6">Inventario</h3>
               <ResponsiveContainer width="100%" height={200}>
@@ -349,7 +327,7 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v: number) => `${v} productos`} />
+                  <Tooltip formatter={(v: any) => `${v} productos`} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="mt-4 space-y-2">
@@ -366,7 +344,7 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
             </div>
           </div>
 
-          {/* ── Top productos ── */}
+          {/* Top productos */}
           <div className="rounded-2xl border border-border bg-background p-6 shadow-sm">
             <h3 className="text-base font-semibold text-foreground mb-6">
               Top productos — {rangeLabel}

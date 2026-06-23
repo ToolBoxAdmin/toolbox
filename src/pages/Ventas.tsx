@@ -6,7 +6,7 @@ interface VentasProps {
   orgId: number;
 }
 
-type Period = "today" | "week" | "month" | "year" | "custom";
+type Period = "today" | "week" | "month" | "year" | "all" | "custom";
 
 interface PeriodRange {
   start: string;
@@ -59,6 +59,10 @@ function getRange(period: Period, custom: PeriodRange): PeriodRange {
   if (period === "year") {
     return { start: fmt(new Date(today.getFullYear(), 0, 1)), end: fmt(today) };
   }
+
+  if (period === "all") {
+    return { start: "2000-01-01", end: fmt(today) };
+    }
   return custom;
 }
 
@@ -71,7 +75,7 @@ function formatDate(dateStr: string) {
 }
 
 const PERIOD_LABELS: Record<Period, string> = {
-  today: "Hoy", week: "Esta semana", month: "Este mes", year: "Este año", custom: "Personalizado",
+  today: "Hoy", week: "Esta semana", month: "Este mes", year: "Este año", all: "Todo", custom: "Personalizado",
 };
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {

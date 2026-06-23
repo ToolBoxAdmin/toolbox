@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Plus, X, ChevronDown, Package, ChevronRight, TrendingUp } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { Plus, X, ChevronDown, Package, ChevronRight, TrendingUp, Upload, ImageIcon } from "lucide-react";
 
 interface ProductosProps {
   token: string;
@@ -16,6 +16,7 @@ interface Producto {
   stock_current: number;
   stock_min: number;
   active: boolean;
+  image_url?: string;
 }
 
 interface TopVenta {
@@ -38,6 +39,35 @@ const CATEGORY_COLORS: Record<string, string> = {
   "Otro": "bg-gray-100 text-gray-600",
 };
 
+async function compressImage(file: File, maxMB = 2): Promise<{ base64: string; type: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      let { width, height } = img;
+      const maxDim = 1200;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) { height = Math.round((height * maxDim) / width); width = maxDim; }
+        else { width = Math.round((width * maxDim) / height); height = maxDim; }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+      let quality = 0.85;
+      let base64 = canvas.toDataURL("image/jpeg", quality);
+      while (base64.length > maxMB * 1024 * 1024 * 1.37 && quality > 0.3) {
+        quality -= 0.1;
+        base64 = canvas.toDataURL("image/jpeg", quality);
+      }
+      URL.revokeObjectURL(url);
+      resolve({ base64: base64.split(",")[1], type: "image/jpeg" });
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
 export default function Productos({ token, orgId }: ProductosProps) {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,10 +75,13 @@ export default function Productos({ token, orgId }: ProductosProps) {
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("Todas");
 
-  // Panel lateral detalle
+  // Panel lateral
   const [panelProduct, setPanelProduct] = useState<Producto | null>(null);
   const [topVentas, setTopVentas] = useState<TopVenta[]>([]);
   const [loadingPanel, setLoadingPanel] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Modal nuevo producto
   const [showModal, setShowModal] = useState(false);
@@ -56,10 +89,20 @@ export default function Productos({ token, orgId }: ProductosProps) {
     name: "", sku: "", category: "Niña",
     unit_cost: "", unit_price: "", stock_current: "", stock_min: "",
   });
+  const [newProductImage, setNewProductImage] = useState<{ base64: string; type: string } | null>(null);
+  const [newImagePreview, setNewImagePreview] = useState<string | null>(null);
+  const newFileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+
+  // Escape para cerrar panel
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setPanelProduct(null); };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, []);
 
   const fetchProductos = async () => {
     setLoading(true);
@@ -80,6 +123,7 @@ export default function Productos({ token, orgId }: ProductosProps) {
 
   const openPanel = async (p: Producto) => {
     setPanelProduct(p);
+    setImagePreview(p.image_url ?? null);
     setLoadingPanel(true);
     try {
       const res = await fetch(
@@ -95,6 +139,46 @@ export default function Productos({ token, orgId }: ProductosProps) {
     }
   };
 
+  // Imagen en panel lateral (producto existente)
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!panelProduct || !e.target.files?.[0]) return;
+    const file = e.target.files[0];
+    if (!file.type.startsWith("image/")) { alert("Solo se permiten imágenes."); return; }
+    setUploadingImage(true);
+    try {
+      const { base64, type } = await compressImage(file);
+      setImagePreview(`data:${type};base64,${base64}`);
+      const res = await fetch(
+        `https://toolbox-backend-rkit.onrender.com/api/productos/${panelProduct.id}/imagen`,
+        { method: "POST", headers, body: JSON.stringify({ image_data: base64, content_type: type }) }
+      );
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setProductos((prev) => prev.map((p) => p.id === panelProduct.id ? { ...p, image_url: data.image_url } : p));
+      setPanelProduct((prev) => prev ? { ...prev, image_url: data.image_url } : prev);
+    } catch {
+      alert("No se pudo subir la imagen. Intenta de nuevo.");
+      setImagePreview(panelProduct.image_url ?? null);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  // Imagen en modal nuevo producto
+  const handleNewImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0]) return;
+    const file = e.target.files[0];
+    if (!file.type.startsWith("image/")) { alert("Solo se permiten imágenes."); return; }
+    try {
+      const compressed = await compressImage(file);
+      setNewProductImage(compressed);
+      setNewImagePreview(`data:${compressed.type};base64,${compressed.base64}`);
+    } catch {
+      alert("No se pudo procesar la imagen.");
+    }
+  };
+
+  // Crear producto (y subir imagen si hay)
   const crearProducto = async () => {
     if (!newProduct.name || !newProduct.unit_price) {
       setSubmitError("Nombre y precio de venta son obligatorios.");
@@ -103,6 +187,7 @@ export default function Productos({ token, orgId }: ProductosProps) {
     setSubmitting(true);
     setSubmitError("");
     try {
+      // 1. Crear producto
       const res = await fetch("https://toolbox-backend-rkit.onrender.com/api/productos/crear", {
         method: "POST",
         headers,
@@ -121,8 +206,23 @@ export default function Productos({ token, orgId }: ProductosProps) {
         const err = await res.json();
         throw new Error(err.error || "Error al crear el producto");
       }
+      const created = await res.json();
+      const newId = created.producto?.id;
+
+      // 2. Subir imagen si el usuario seleccionó una
+      if (newId && newProductImage) {
+        await fetch(`https://toolbox-backend-rkit.onrender.com/api/productos/${newId}/imagen`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ image_data: newProductImage.base64, content_type: newProductImage.type }),
+        });
+      }
+
+      // 3. Reset y refrescar
       setShowModal(false);
       setNewProduct({ name: "", sku: "", category: "Niña", unit_cost: "", unit_price: "", stock_current: "", stock_min: "" });
+      setNewProductImage(null);
+      setNewImagePreview(null);
       fetchProductos();
     } catch (e: any) {
       setSubmitError(e.message);
@@ -132,10 +232,8 @@ export default function Productos({ token, orgId }: ProductosProps) {
   };
 
   const categories = ["Todas", ...Array.from(new Set(productos.map((p) => p.category)))];
-
   const filtered = productos.filter((p) => {
-    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) ||
-      (p.sku ?? "").toLowerCase().includes(search.toLowerCase());
+    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) || (p.sku ?? "").toLowerCase().includes(search.toLowerCase());
     const matchCat = filterCategory === "Todas" || p.category === filterCategory;
     return matchSearch && matchCat;
   });
@@ -147,14 +245,13 @@ export default function Productos({ token, orgId }: ProductosProps) {
 
   return (
     <div className="flex gap-6">
-      {/* Grid principal */}
       <div className={`flex-1 min-w-0 transition-all duration-300 ${panelProduct ? "max-w-[calc(100%-360px)]" : ""}`}>
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-2xl font-bold text-foreground">Productos</h2>
             <p className="text-sm text-muted-foreground mt-0.5">{productos.length} productos en catálogo</p>
           </div>
-          <button onClick={() => { setShowModal(true); setSubmitError(""); }}
+          <button onClick={() => { setShowModal(true); setSubmitError(""); setNewProductImage(null); setNewImagePreview(null); }}
             className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity">
             <Plus size={16} />
             Nuevo producto
@@ -199,28 +296,26 @@ export default function Productos({ token, orgId }: ProductosProps) {
               const isActive = panelProduct?.id === p.id;
               const m = margen(p);
               return (
-                <button key={p.id} onClick={() => openPanel(p)} className={`text-left rounded-2xl border bg-background p-5 hover:shadow-md transition-all group ${isActive ? "border-[var(--brand-red)] ring-1 ring-[var(--brand-red)]/20" : "border-border hover:border-[var(--brand-red)]/30"}`}>
-
-                  {/* Imagen placeholder */}
+                <button key={p.id} onClick={() => openPanel(p)}
+                  className={`text-left rounded-2xl border bg-background p-5 hover:shadow-md transition-all group ${isActive ? "border-[var(--brand-red)] ring-1 ring-[var(--brand-red)]/20" : "border-border hover:border-[var(--brand-red)]/30"}`}>
                   <div className="w-full h-36 rounded-xl bg-muted/50 flex items-center justify-center mb-4 overflow-hidden">
-                    <Package size={40} className="text-muted-foreground/40" />
+                    {p.image_url ? (
+                      <img src={p.image_url} alt={p.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <Package size={40} className="text-muted-foreground/40" />
+                    )}
                   </div>
-
-                  {/* Info */}
                   <div className="flex items-start justify-between mb-2">
                     <p className="text-sm font-semibold text-foreground leading-tight flex-1 mr-2">{p.name}</p>
                     <ChevronRight size={14} className="text-muted-foreground shrink-0 mt-0.5 group-hover:text-[var(--brand-red)] transition-colors" />
                   </div>
-
                   {p.sku && <p className="text-xs font-mono text-muted-foreground mb-3">{p.sku}</p>}
-
                   <div className="flex items-center justify-between">
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${CATEGORY_COLORS[p.category] ?? "bg-gray-100 text-gray-600"}`}>
                       {p.category}
                     </span>
                     <span className="text-base font-bold text-foreground">{formatCurrency(p.unit_price)}</span>
                   </div>
-
                   {m !== null && (
                     <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
                       <span className="text-xs text-muted-foreground">Margen</span>
@@ -236,7 +331,7 @@ export default function Productos({ token, orgId }: ProductosProps) {
         )}
       </div>
 
-      {/* Panel lateral detalle */}
+      {/* Panel lateral */}
       {panelProduct && (
         <div className="w-[340px] shrink-0 rounded-2xl border border-border bg-background overflow-hidden sticky top-24 self-start max-h-[calc(100vh-120px)] overflow-y-auto">
           <div className="flex items-center justify-between px-5 py-4 border-b border-border">
@@ -246,13 +341,27 @@ export default function Productos({ token, orgId }: ProductosProps) {
             </button>
           </div>
 
-          {/* Imagen */}
-          <div className="w-full h-44 bg-muted/40 flex items-center justify-center border-b border-border">
-            <Package size={48} className="text-muted-foreground/30" />
+          <div className="relative w-full h-44 bg-muted/40 flex items-center justify-center border-b border-border overflow-hidden group">
+            {imagePreview ? (
+              <img src={imagePreview} alt={panelProduct.name} className="w-full h-full object-cover" />
+            ) : (
+              <Package size={48} className="text-muted-foreground/30" />
+            )}
+            <button onClick={() => fileInputRef.current?.click()} disabled={uploadingImage}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+              {uploadingImage ? (
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <>
+                  <Upload size={20} className="text-white" />
+                  <span className="text-xs text-white font-medium">Cambiar imagen</span>
+                </>
+              )}
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
           </div>
 
           <div className="p-5 space-y-4">
-            {/* Nombre y categoría */}
             <div>
               <h2 className="text-lg font-bold text-foreground">{panelProduct.name}</h2>
               {panelProduct.sku && <p className="text-xs font-mono text-muted-foreground mt-0.5">{panelProduct.sku}</p>}
@@ -261,7 +370,6 @@ export default function Productos({ token, orgId }: ProductosProps) {
               </span>
             </div>
 
-            {/* Precios */}
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-xl bg-muted/40 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Precio venta</p>
@@ -275,7 +383,6 @@ export default function Productos({ token, orgId }: ProductosProps) {
               </div>
             </div>
 
-            {/* Margen */}
             {margen(panelProduct) !== null && (
               <div className="rounded-xl bg-muted/40 p-3 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -288,7 +395,6 @@ export default function Productos({ token, orgId }: ProductosProps) {
               </div>
             )}
 
-            {/* Stock */}
             <div className="rounded-xl border border-border p-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm text-muted-foreground">Stock actual</span>
@@ -297,15 +403,12 @@ export default function Productos({ token, orgId }: ProductosProps) {
                 </span>
               </div>
               <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full ${panelProduct.stock_current === 0 ? "bg-red-400" : panelProduct.stock_current <= panelProduct.stock_min ? "bg-amber-400" : "bg-emerald-400"}`}
-                  style={{ width: `${Math.min(100, panelProduct.stock_min > 0 ? (panelProduct.stock_current / (panelProduct.stock_min * 3)) * 100 : 100)}%` }}
-                />
+                <div className={`h-full rounded-full ${panelProduct.stock_current === 0 ? "bg-red-400" : panelProduct.stock_current <= panelProduct.stock_min ? "bg-amber-400" : "bg-emerald-400"}`}
+                  style={{ width: `${Math.min(100, panelProduct.stock_min > 0 ? (panelProduct.stock_current / (panelProduct.stock_min * 3)) * 100 : 100)}%` }} />
               </div>
               <p className="text-xs text-muted-foreground mt-1.5">Mínimo: {panelProduct.stock_min} uds</p>
             </div>
 
-            {/* Historial de ventas por mes */}
             <div>
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Ventas por mes</p>
               {loadingPanel ? (
@@ -342,6 +445,29 @@ export default function Productos({ token, orgId }: ProductosProps) {
             </div>
 
             <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+
+              {/* Selector de imagen */}
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Imagen del producto</label>
+                <button type="button" onClick={() => newFileInputRef.current?.click()}
+                  className="w-full h-32 rounded-xl border-2 border-dashed border-border hover:border-[var(--brand-red)] transition-colors flex flex-col items-center justify-center gap-2 overflow-hidden relative">
+                  {newImagePreview ? (
+                    <img src={newImagePreview} alt="preview" className="w-full h-full object-cover absolute inset-0" />
+                  ) : (
+                    <>
+                      <ImageIcon size={24} className="text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Click para subir imagen (máx 2MB)</span>
+                    </>
+                  )}
+                  {newImagePreview && (
+                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                      <span className="text-xs text-white font-medium">Cambiar imagen</span>
+                    </div>
+                  )}
+                </button>
+                <input ref={newFileInputRef} type="file" accept="image/*" className="hidden" onChange={handleNewImageChange} />
+              </div>
+
               <div>
                 <label className="text-sm font-medium text-foreground mb-1.5 block">Nombre *</label>
                 <input type="text" placeholder="Traje de baño niña flores" value={newProduct.name}

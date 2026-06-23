@@ -659,6 +659,48 @@ def editar_producto(product_id):
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+# ============================================================================
+# ENDPOINT: PRODUCTOS — SUBIR IMAGEN
+# ============================================================================
+
+@app.route('/api/productos/<int:product_id>/imagen', methods=['POST'])
+def subir_imagen(product_id):
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        data = request.json
+        image_data = data.get('image_data')  # base64
+        content_type = data.get('content_type', 'image/jpeg')
+
+        if not image_data:
+            return jsonify({'error': 'No se recibió imagen'}), 400
+
+        import base64
+        image_bytes = base64.b64decode(image_data)
+
+        if len(image_bytes) > 2 * 1024 * 1024:
+            return jsonify({'error': 'La imagen no puede superar 2MB'}), 400
+
+        ext = 'jpg' if 'jpeg' in content_type else content_type.split('/')[-1]
+        filename = f"org-{payload['org_id']}/product-{product_id}.{ext}"
+
+        supabase.storage.from_('product-images').upload(
+            filename,
+            image_bytes,
+            {'content-type': content_type, 'upsert': 'true'}
+        )
+
+        public_url = supabase.storage.from_('product-images').get_public_url(filename)
+
+        supabase.table('products').update({'image_url': public_url}).eq('id', product_id).execute()
+
+        return jsonify({'image_url': public_url}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # ============================================================================
 # ENDPOINT: PRODUCTOS — VENTAS POR MES

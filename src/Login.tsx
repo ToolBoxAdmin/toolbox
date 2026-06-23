@@ -1,18 +1,23 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Loader } from "lucide-react";
 
 export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [slowConnection, setSlowConnection] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
+    setSlowConnection(false);
+
+    // Si tarda más de 4 segundos, mostramos aviso de servidor dormido
+    const slowTimer = setTimeout(() => setSlowConnection(true), 4000);
 
     try {
       const response = await fetch(
@@ -24,10 +29,13 @@ export default function Login() {
         }
       );
 
+      clearTimeout(slowTimer);
+
       if (!response.ok) {
         const data = await response.json();
         setError(data.error || "Usuario o contraseña incorrecta");
         setLoading(false);
+        setSlowConnection(false);
         return;
       }
 
@@ -44,8 +52,10 @@ export default function Login() {
         navigate("/");
       }
     } catch (err) {
+      clearTimeout(slowTimer);
       setError("Error de conexión con el servidor");
       setLoading(false);
+      setSlowConnection(false);
     }
   };
 
@@ -73,6 +83,19 @@ export default function Login() {
             </div>
           )}
 
+          {/* Aviso de servidor dormido */}
+          {slowConnection && (
+            <div className="rounded-lg border border-border bg-muted/50 px-4 py-3 flex items-start gap-3">
+              <Loader size={16} className="animate-spin text-muted-foreground mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-foreground">Conectando con el servidor...</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Esto puede tomar hasta 30 segundos la primera vez. Por favor espera.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">
               Usuario
@@ -81,7 +104,7 @@ export default function Login() {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="usuario"
+              placeholder="manolo"
               required
               className="w-full rounded-lg border border-border bg-background px-4 py-3 text-foreground placeholder:text-muted-foreground focus:border-[var(--brand-red)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20"
             />

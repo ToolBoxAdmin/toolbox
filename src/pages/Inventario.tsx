@@ -16,6 +16,7 @@ interface Producto {
   stock_current: number;
   stock_min: number;
   active: boolean;
+  image_url?: string;
 }
 
 interface Movimiento {

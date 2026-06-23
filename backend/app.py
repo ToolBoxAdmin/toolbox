@@ -633,6 +633,124 @@ def agregar_stock():
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
+# ENDPOINT: PRODUCTOS — EDITAR
+# ============================================================================
+
+@app.route('/api/productos/<int:product_id>', methods=['PATCH'])
+def editar_producto(product_id):
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        data = request.json
+        updates = {}
+        if 'name' in data: updates['name'] = data['name']
+        if 'sku' in data: updates['sku'] = data['sku']
+        if 'unit_cost' in data: updates['unit_cost'] = data['unit_cost']
+        if 'unit_price' in data: updates['unit_price'] = data['unit_price']
+        if 'stock_min' in data: updates['stock_min'] = data['stock_min']
+
+        if not updates:
+            return jsonify({'error': 'Nada que actualizar'}), 400
+
+        res = supabase.table('products').update(updates).eq('id', product_id).execute()
+        return jsonify({'producto': res.data[0]}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# ENDPOINT: PRODUCTOS — VENTAS POR MES
+# ============================================================================
+
+@app.route('/api/productos/<int:product_id>/ventas', methods=['GET'])
+def producto_ventas(product_id):
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        org_id = int(request.args.get('org_id'))
+
+        items_res = supabase.table('sale_items') \
+            .select('quantity, subtotal, sale_id') \
+            .eq('product_id', product_id) \
+            .execute()
+
+        if not items_res.data:
+            return jsonify({'ventas_por_mes': []}), 200
+
+        sale_ids = [i['sale_id'] for i in items_res.data]
+
+        sales_res = supabase.table('sales') \
+            .select('id, sale_date') \
+            .eq('org_id', org_id) \
+            .eq('status', 'completada') \
+            .in_('id', sale_ids) \
+            .execute()
+
+        date_map = {s['id']: s['sale_date'] for s in sales_res.data}
+
+        MONTHS_ES = {
+            1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr',
+            5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Ago',
+            9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
+        }
+
+        by_month = {}
+        for item in items_res.data:
+            sale_date = date_map.get(item['sale_id'])
+            if not sale_date:
+                continue
+            m = int(sale_date.split('-')[1])
+            if m not in by_month:
+                by_month[m] = {'total': 0, 'unidades': 0}
+            by_month[m]['total'] += item['subtotal']
+            by_month[m]['unidades'] += item['quantity']
+
+        result = [
+            {
+                'mes': MONTHS_ES.get(m, str(m)),
+                'total': round(vals['total'], 2),
+                'unidades': int(vals['unidades']),
+            }
+            for m, vals in sorted(by_month.items())
+        ]
+
+        return jsonify({'ventas_por_mes': result}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# ENDPOINT: INVENTARIO — MOVIMIENTOS
+# ============================================================================
+
+@app.route('/api/inventario/movimientos', methods=['GET'])
+def get_movimientos():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        product_id = int(request.args.get('product_id'))
+        org_id = int(request.args.get('org_id'))
+
+        res = supabase.table('inventory_movements') \
+            .select('id, type, quantity, reason, sale_id, created_at') \
+            .eq('product_id', product_id) \
+            .eq('org_id', org_id) \
+            .order('created_at', desc=True) \
+            .limit(20) \
+            .execute()
+
+        return jsonify({'movimientos': res.data}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
 # ENDPOINTS EXISTENTES — sin cambios
 # ============================================================================
 

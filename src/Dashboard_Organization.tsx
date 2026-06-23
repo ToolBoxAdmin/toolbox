@@ -9,6 +9,7 @@ import {
 import DashboardHome from "./pages/DashboardHome";
 import Ventas from "./pages/Ventas";
 import Productos from "./pages/Productos";
+import Inventario from "./pages/Inventario";
 import WorkInProgress from "./pages/WorkInProgress";
 
 type Section =
@@ -30,7 +31,7 @@ const TOOLS: { id: Section; name: string; icon: any }[] = [
 ];
 
 const WIP_SECTIONS: Section[] = [
-  "inventario", "clientes", "pedidos", "marketing",
+  "clientes", "pedidos", "marketing",
   "reportes", "finanzas", "integraciones",
 ];
 
@@ -87,7 +88,7 @@ export default function Dashboard_Organization() {
   const mainMargin   = sidebarOpen ? "ml-64" : "ml-16";
 
   const sectionTitles: Record<Section, string> = {
-    dashboard:     `Bienvenido, ${orgData?.users?.[0]?.full_name ?? user?.username}`,
+    dashboard:     `Bienvenido, ${orgData?.org_name ?? user?.username}`,
     ventas:        "Ventas",
     productos:     "Productos",
     inventario:    "Inventario",
@@ -200,6 +201,9 @@ export default function Dashboard_Organization() {
           )}
           {section === "productos" && user?.token && orgData && (
             <Productos token={user.token} orgId={orgData.org_id} />
+          )}
+          {section === "inventario" && user?.token && orgData && (
+            <Inventario token={user.token} orgId={orgData.org_id} />
           )}
           {WIP_SECTIONS.includes(section) && (
             <WorkInProgress section={sectionTitles[section]} />

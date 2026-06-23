@@ -88,7 +88,7 @@ export default function Dashboard_Organization() {
   const mainMargin   = sidebarOpen ? "ml-64" : "ml-16";
 
   const sectionTitles: Record<Section, string> = {
-    dashboard:     `Bienvenido, ${orgData?.org_name ?? user?.username}`,
+    dashboard:     `Bienvenido, ${orgData?.users?.[0]?.full_name ?? user?.username}`,
     ventas:        "Ventas",
     productos:     "Productos",
     inventario:    "Inventario",

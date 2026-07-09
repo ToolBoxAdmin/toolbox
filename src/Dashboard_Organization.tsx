@@ -13,6 +13,12 @@ import Inventario from "./pages/Inventario";
 import WorkInProgress from "./pages/WorkInProgress";
 import DashboardEmployee from "./pages/DashboardEmployee";
 import AgregarHerramienta from "./pages/AgregarHerramienta";
+import Clientes from "./pages/Clientes";
+import Pedidos from "./pages/Pedidos";
+import Marketing from "./pages/Marketing";
+import Reportes from "./pages/Reportes";
+import Finanzas from "./pages/Finanzas";
+import MiPerfil from "./pages/MiPerfil";
 
 type Section =
   | "dashboard" | "ventas" | "productos" | "inventario"
@@ -41,10 +47,8 @@ const TOOLS: { id: Section; name: string; icon: any }[] = [
   { id: "integraciones",  name: "Integraciones",   icon: Plug },
 ];
 
-// Secciones que aún no construimos (esta entrega)
-const WIP_SECTIONS: Section[] = [
-  "clientes", "pedidos", "marketing", "reportes", "finanzas", "integraciones", "perfil",
-];
+// Secciones que aún no construimos
+const WIP_SECTIONS: Section[] = ["integraciones"];
 
 // Lo que puede ver un empleado
 const EMPLOYEE_SECTIONS: Section[] = ["dashboard", "ventas", "productos", "inventario", "pedidos"];
@@ -414,6 +418,24 @@ export default function Dashboard_Organization() {
           )}
           {section === "inventario" && user?.token && orgData && (
             <Inventario token={user.token} orgId={orgData.org_id} />
+          )}
+          {section === "clientes" && user?.token && orgData && (
+            <Clientes token={user.token} orgId={orgData.org_id} />
+          )}
+          {section === "pedidos" && user?.token && orgData && (
+            <Pedidos token={user.token} orgId={orgData.org_id} />
+          )}
+          {section === "marketing" && user?.token && orgData && (
+            <Marketing token={user.token} orgId={orgData.org_id} />
+          )}
+          {section === "reportes" && user?.token && orgData && (
+            <Reportes token={user.token} orgId={orgData.org_id} orgName={orgData.org_name} />
+          )}
+          {section === "finanzas" && user?.token && orgData && (
+            <Finanzas token={user.token} orgId={orgData.org_id} />
+          )}
+          {section === "perfil" && user?.token && orgData && (
+            <MiPerfil token={user.token} orgId={orgData.org_id} role={role} />
           )}
           {WIP_SECTIONS.includes(section) && (
             <WorkInProgress section={sectionTitles[section]} />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, X, Search, MessageCircle, Mail, Instagram, Pencil, Trash2, Users, Send } from "lucide-react";
+import { Plus, X, Search, MessageCircle, Mail, AtSign, Pencil, Trash2, Users, Send } from "lucide-react";
 
 interface ClientesProps {
   token: string;
@@ -368,7 +368,7 @@ export default function Clientes({ token, orgId }: ClientesProps) {
                   className={`flex flex-col items-center gap-1.5 rounded-xl border border-border py-3 text-xs font-medium transition-colors ${
                     contactClient.instagram ? "text-foreground hover:border-pink-400 hover:bg-pink-50" : "opacity-40 pointer-events-none"
                   }`}>
-                  <Instagram size={18} className="text-pink-500" />
+                  <AtSign size={18} className="text-pink-500" />
                   Instagram
                 </a>
               </div>

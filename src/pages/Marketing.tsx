@@ -1,8 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Plus, X, ChevronDown, Trash2, Pencil, Megaphone,
-  GraduationCap, Instagram, Music2, Facebook, Globe, Calculator,
-} from "lucide-react";
+import { Plus, X, ChevronDown, Trash2, Pencil, Megaphone, GraduationCap, AtSign, Music2, Radio, Globe, Calculator } from "lucide-react";
 
 interface MarketingProps {
   token: string;
@@ -26,9 +23,9 @@ interface Campana {
 }
 
 const PLATFORMS: { key: string; label: string; icon: any; color: string }[] = [
-  { key: "instagram", label: "Instagram", icon: Instagram, color: "bg-pink-100 text-pink-700" },
+  { key: "instagram", label: "Instagram", icon: AtSign, color: "bg-pink-100 text-pink-700" },
   { key: "tiktok",    label: "TikTok",    icon: Music2,    color: "bg-gray-900 text-white" },
-  { key: "facebook",  label: "Facebook",  icon: Facebook,  color: "bg-blue-100 text-blue-700" },
+  { key: "facebook",  label: "Facebook",  icon: Radio,  color: "bg-blue-100 text-blue-700" },
   { key: "otro",      label: "Otro",      icon: Globe,     color: "bg-gray-100 text-gray-600" },
 ];
 

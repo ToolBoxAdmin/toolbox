@@ -1,6 +1,8 @@
 """
 TOOLBOX BACKEND - Flask App
 ============================
+Sprint 5: notificaciones, clientes, pedidos, gastos/finanzas,
+campañas, marketplace de herramientas, perfil y vista de empleado.
 """
 
 from flask import Flask, request, jsonify
@@ -9,6 +11,7 @@ from config import Config
 from dotenv import load_dotenv
 import jwt
 import bcrypt
+import base64
 from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 import os
@@ -31,7 +34,7 @@ CORS(app, resources={r"/api/*": {"origins": Config.CORS_ORIGINS.split(',')}})
 # ============================================================================
 
 supabase: Client = create_client(Config.SUPABASE_URL, Config.SUPABASE_KEY)
-print(f"✅ Conectado a Supabase", file=sys.stderr, flush=True)
+print("✅ Conectado a Supabase", file=sys.stderr, flush=True)
 
 # ============================================================================
 # FUNCIONES AUXILIARES
@@ -65,12 +68,62 @@ def get_token_payload():
     return verify_token(token)
 
 def generate_sale_id():
-    """Genera un ID de venta único tipo VTA-XXXXXX"""
     return f"VTA-{uuid.uuid4().hex[:6].upper()}"
 
 def generate_item_id():
-    """Genera un ID de item único tipo SI-XXXXXXXX"""
     return f"SI-{uuid.uuid4().hex[:8].upper()}"
+
+MONTHS_ES = {
+    1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr',
+    5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Ago',
+    9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
+}
+
+# ============================================================================
+# NOTIFICACIONES — generación automática
+# ============================================================================
+
+def check_and_generate_notifications(org_id: int):
+    """Revisa condiciones del negocio y crea notificaciones si aplica.
+    Evita duplicados: no crea si ya existe una sin leer del mismo tipo."""
+    try:
+        # 1. Stock bajo / agotado
+        prods = supabase.table('products') \
+            .select('name, stock_current, stock_min') \
+            .eq('org_id', org_id).eq('active', True).execute()
+
+        low = [p for p in prods.data if p['stock_current'] <= p['stock_min']]
+        if low:
+            existing = supabase.table('notifications').select('id') \
+                .eq('org_id', org_id).eq('type', 'stock_bajo').eq('read', False).execute()
+            if not existing.data:
+                names = ", ".join(p['name'] for p in low[:4])
+                extra = f" y {len(low) - 4} más" if len(low) > 4 else ""
+                supabase.table('notifications').insert({
+                    'org_id': org_id,
+                    'type': 'stock_bajo',
+                    'title': f"{len(low)} producto{'s' if len(low) > 1 else ''} con stock bajo",
+                    'message': f"Revisa: {names}{extra}."
+                }).execute()
+
+        # 2. Días sin registrar ventas
+        last = supabase.table('sales').select('sale_date') \
+            .eq('org_id', org_id).order('sale_date', desc=True).limit(1).execute()
+        if last.data:
+            last_date = datetime.strptime(last.data[0]['sale_date'], '%Y-%m-%d').date()
+            days = (date.today() - last_date).days
+            if days >= 3:
+                existing = supabase.table('notifications').select('id') \
+                    .eq('org_id', org_id).eq('type', 'sin_ventas').eq('read', False).execute()
+                if not existing.data:
+                    supabase.table('notifications').insert({
+                        'org_id': org_id,
+                        'type': 'sin_ventas',
+                        'title': f"Llevas {days} días sin registrar ventas",
+                        'message': "Registra tus ventas para mantener tus métricas al día."
+                    }).execute()
+    except Exception as e:
+        print(f"Error generando notificaciones: {e}", file=sys.stderr, flush=True)
 
 # ============================================================================
 # HEALTH CHECK
@@ -94,22 +147,24 @@ def login():
         username = data.get('username')
         password = data.get('password')
 
-        print(f"LOGIN ATTEMPT: username={username}", file=sys.stderr, flush=True)
-
         response = supabase.table('users').select('*').eq('username', username).execute()
-
-        print(f"QUERY RESULT: {response.data}", file=sys.stderr, flush=True)
 
         if not response.data:
             return jsonify({'error': 'Usuario o contraseña incorrecta'}), 401
 
         user = response.data[0]
 
+        if not user.get('active', True):
+            return jsonify({'error': 'Usuario desactivado. Contacta al dueño de tu organización.'}), 401
+
         if not verify_password(password, user['password_hash']):
             return jsonify({'error': 'Usuario o contraseña incorrecta'}), 401
 
         org_id = user.get('org_id')
         token = create_token(user['id'], user['username'], user['role'], org_id)
+
+        # Actualizar último acceso
+        supabase.table('users').update({'last_login': datetime.utcnow().isoformat()}).eq('id', user['id']).execute()
 
         return jsonify({
             'token': token,
@@ -168,7 +223,7 @@ def dashboard_org():
         if not org:
             return jsonify({'error': 'Organización no encontrada'}), 404
 
-        users_response = supabase.table('users').select('id, username, role, full_name').eq('org_id', org_id).execute()
+        users_response = supabase.table('users').select('id, username, role, full_name, active').eq('org_id', org_id).execute()
         users = users_response.data
 
         return jsonify({
@@ -245,12 +300,6 @@ def dashboard_ventas_chart():
         prev_start = request.args.get('prev_start')
         prev_end = request.args.get('prev_end')
 
-        MONTHS_ES = {
-            1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr',
-            5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Ago',
-            9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
-        }
-
         def get_by_month(date_start, date_end):
             res = supabase.table('sales') \
                 .select('sale_date, total_amount') \
@@ -298,7 +347,6 @@ def dashboard_top_productos():
         start = request.args.get('start')
         end = request.args.get('end')
 
-        # Obtener ventas del periodo
         sales_res = supabase.table('sales') \
             .select('id') \
             .eq('org_id', org_id) \
@@ -312,13 +360,11 @@ def dashboard_top_productos():
 
         sale_ids = [s['id'] for s in sales_res.data]
 
-        # Obtener items de esas ventas
         items_res = supabase.table('sale_items') \
             .select('product_id, quantity, subtotal') \
             .in_('sale_id', sale_ids) \
             .execute()
 
-        # Agrupar por producto
         product_totals = {}
         for item in items_res.data:
             pid = item['product_id']
@@ -330,7 +376,6 @@ def dashboard_top_productos():
         if not product_totals:
             return jsonify([]), 200
 
-        # Obtener nombres de productos
         product_ids = list(product_totals.keys())
         prods_res = supabase.table('products') \
             .select('id, name') \
@@ -483,7 +528,6 @@ def crear_venta():
         sale_id = generate_sale_id()
         today = date.today().isoformat()
 
-        # Crear la venta
         supabase.table('sales').insert({
             'id': sale_id,
             'org_id': org_id,
@@ -494,7 +538,6 @@ def crear_venta():
             'created_by': payload['user_id'],
         }).execute()
 
-        # Crear los items y actualizar stock
         for item in items:
             item_id = generate_item_id()
             subtotal = round(item['unit_price'] * item['quantity'], 2)
@@ -508,13 +551,11 @@ def crear_venta():
                 'subtotal': subtotal,
             }).execute()
 
-            # Descontar stock
             prod_res = supabase.table('products').select('stock_current').eq('id', item['product_id']).execute()
             if prod_res.data:
                 new_stock = max(0, prod_res.data[0]['stock_current'] - item['quantity'])
                 supabase.table('products').update({'stock_current': new_stock}).eq('id', item['product_id']).execute()
 
-                # Registrar movimiento de inventario
                 supabase.table('inventory_movements').insert({
                     'product_id': item['product_id'],
                     'org_id': org_id,
@@ -589,50 +630,6 @@ def crear_producto():
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
-# ENDPOINT: PRODUCTOS — AGREGAR STOCK
-# ============================================================================
-
-@app.route('/api/productos/stock', methods=['POST'])
-def agregar_stock():
-    try:
-        payload = get_token_payload()
-        if not payload:
-            return jsonify({'error': 'Token inválido'}), 401
-
-        data = request.json
-        product_id = data.get('product_id')
-        org_id = data.get('org_id')
-        quantity = int(data.get('quantity', 0))
-
-        if quantity <= 0:
-            return jsonify({'error': 'La cantidad debe ser mayor a 0'}), 400
-
-        # Obtener stock actual
-        prod_res = supabase.table('products').select('stock_current').eq('id', product_id).execute()
-        if not prod_res.data:
-            return jsonify({'error': 'Producto no encontrado'}), 404
-
-        new_stock = prod_res.data[0]['stock_current'] + quantity
-
-        # Actualizar stock
-        supabase.table('products').update({'stock_current': new_stock}).eq('id', product_id).execute()
-
-        # Registrar movimiento
-        supabase.table('inventory_movements').insert({
-            'product_id': product_id,
-            'org_id': org_id,
-            'type': 'entrada',
-            'quantity': quantity,
-            'reason': 'compra',
-            'created_by': payload['user_id'],
-        }).execute()
-
-        return jsonify({'new_stock': new_stock}), 200
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-# ============================================================================
 # ENDPOINT: PRODUCTOS — EDITAR
 # ============================================================================
 
@@ -659,7 +656,7 @@ def editar_producto(product_id):
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-    
+
 # ============================================================================
 # ENDPOINT: PRODUCTOS — SUBIR IMAGEN
 # ============================================================================
@@ -672,13 +669,12 @@ def subir_imagen(product_id):
             return jsonify({'error': 'Token inválido'}), 401
 
         data = request.json
-        image_data = data.get('image_data')  # base64
+        image_data = data.get('image_data')
         content_type = data.get('content_type', 'image/jpeg')
 
         if not image_data:
             return jsonify({'error': 'No se recibió imagen'}), 400
 
-        import base64
         image_bytes = base64.b64decode(image_data)
 
         if len(image_bytes) > 2 * 1024 * 1024:
@@ -734,12 +730,6 @@ def producto_ventas(product_id):
 
         date_map = {s['id']: s['sale_date'] for s in sales_res.data}
 
-        MONTHS_ES = {
-            1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr',
-            5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Ago',
-            9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
-        }
-
         by_month = {}
         for item in items_res.data:
             sale_date = date_map.get(item['sale_id'])
@@ -761,6 +751,47 @@ def producto_ventas(product_id):
         ]
 
         return jsonify({'ventas_por_mes': result}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# ENDPOINT: PRODUCTOS — AGREGAR STOCK
+# ============================================================================
+
+@app.route('/api/productos/stock', methods=['POST'])
+def agregar_stock():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        data = request.json
+        product_id = data.get('product_id')
+        org_id = data.get('org_id')
+        quantity = int(data.get('quantity', 0))
+
+        if quantity <= 0:
+            return jsonify({'error': 'La cantidad debe ser mayor a 0'}), 400
+
+        prod_res = supabase.table('products').select('stock_current').eq('id', product_id).execute()
+        if not prod_res.data:
+            return jsonify({'error': 'Producto no encontrado'}), 404
+
+        new_stock = prod_res.data[0]['stock_current'] + quantity
+
+        supabase.table('products').update({'stock_current': new_stock}).eq('id', product_id).execute()
+
+        supabase.table('inventory_movements').insert({
+            'product_id': product_id,
+            'org_id': org_id,
+            'type': 'entrada',
+            'quantity': quantity,
+            'reason': 'compra',
+            'created_by': payload['user_id'],
+        }).execute()
+
+        return jsonify({'new_stock': new_stock}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -793,7 +824,803 @@ def get_movimientos():
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
-# ENDPOINTS EXISTENTES — sin cambios
+# NUEVO — NOTIFICACIONES
+# ============================================================================
+
+@app.route('/api/notifications', methods=['GET'])
+def get_notifications():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        org_id = int(request.args.get('org_id'))
+
+        # Genera notificaciones nuevas si aplica
+        check_and_generate_notifications(org_id)
+
+        res = supabase.table('notifications') \
+            .select('*') \
+            .eq('org_id', org_id) \
+            .order('created_at', desc=True) \
+            .limit(30) \
+            .execute()
+
+        unread = len([n for n in res.data if not n['read']])
+
+        return jsonify({'notifications': res.data, 'unread_count': unread}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/notifications/<int:notif_id>/read', methods=['POST'])
+def mark_notification_read(notif_id):
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        supabase.table('notifications').update({'read': True}).eq('id', notif_id).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/notifications/read-all', methods=['POST'])
+def mark_all_notifications_read():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        org_id = request.json.get('org_id')
+        supabase.table('notifications').update({'read': True}).eq('org_id', org_id).eq('read', False).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/notifications/<int:notif_id>', methods=['DELETE'])
+def delete_notification(notif_id):
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        supabase.table('notifications').delete().eq('id', notif_id).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NUEVO — CLIENTES (CRM)
+# ============================================================================
+
+@app.route('/api/clientes', methods=['GET'])
+def get_clientes():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        org_id = int(request.args.get('org_id'))
+
+        res = supabase.table('customers') \
+            .select('*') \
+            .eq('org_id', org_id) \
+            .order('full_name') \
+            .execute()
+
+        return jsonify({'clientes': res.data}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/clientes/crear', methods=['POST'])
+def crear_cliente():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        if not data.get('full_name'):
+            return jsonify({'error': 'El nombre es obligatorio'}), 400
+
+        res = supabase.table('customers').insert({
+            'org_id': data['org_id'],
+            'full_name': data['full_name'],
+            'email': data.get('email', ''),
+            'phone': data.get('phone', ''),
+            'instagram': data.get('instagram', ''),
+            'notes': data.get('notes', ''),
+        }).execute()
+
+        return jsonify({'cliente': res.data[0]}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/clientes/<int:cliente_id>', methods=['PATCH'])
+def editar_cliente(cliente_id):
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        updates = {}
+        for field in ['full_name', 'email', 'phone', 'instagram', 'notes']:
+            if field in data:
+                updates[field] = data[field]
+
+        if not updates:
+            return jsonify({'error': 'Nada que actualizar'}), 400
+
+        res = supabase.table('customers').update(updates).eq('id', cliente_id).execute()
+        return jsonify({'cliente': res.data[0]}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/clientes/<int:cliente_id>', methods=['DELETE'])
+def eliminar_cliente(cliente_id):
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        supabase.table('customers').delete().eq('id', cliente_id).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NUEVO — PEDIDOS / ENVÍOS
+# ============================================================================
+
+@app.route('/api/pedidos', methods=['GET'])
+def get_pedidos():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        org_id = int(request.args.get('org_id'))
+
+        res = supabase.table('orders') \
+            .select('*') \
+            .eq('org_id', org_id) \
+            .order('created_at', desc=True) \
+            .execute()
+
+        return jsonify({'pedidos': res.data}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/pedidos/crear', methods=['POST'])
+def crear_pedido():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        data = request.json
+        if not data.get('customer_name'):
+            return jsonify({'error': 'El nombre del cliente es obligatorio'}), 400
+
+        res = supabase.table('orders').insert({
+            'org_id': data['org_id'],
+            'sale_id': data.get('sale_id'),
+            'customer_name': data['customer_name'],
+            'carrier': data.get('carrier', ''),
+            'tracking_number': data.get('tracking_number', ''),
+            'status': data.get('status', 'preparando'),
+            'shipping_cost': data.get('shipping_cost', 0),
+            'address': data.get('address', ''),
+            'notes': data.get('notes', ''),
+            'created_by': payload['user_id'],
+        }).execute()
+
+        return jsonify({'pedido': res.data[0]}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/pedidos/<int:pedido_id>', methods=['PATCH'])
+def editar_pedido(pedido_id):
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        data = request.json
+        updates = {}
+        for field in ['customer_name', 'carrier', 'tracking_number', 'status', 'shipping_cost', 'address', 'notes']:
+            if field in data:
+                updates[field] = data[field]
+
+        # Fechas automáticas según el estado
+        if data.get('status') == 'enviado':
+            updates['shipped_at'] = date.today().isoformat()
+        if data.get('status') == 'entregado':
+            updates['delivered_at'] = date.today().isoformat()
+
+        if not updates:
+            return jsonify({'error': 'Nada que actualizar'}), 400
+
+        res = supabase.table('orders').update(updates).eq('id', pedido_id).execute()
+        return jsonify({'pedido': res.data[0]}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NUEVO — GASTOS (para Finanzas)
+# ============================================================================
+
+@app.route('/api/gastos', methods=['GET'])
+def get_gastos():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        org_id = int(request.args.get('org_id'))
+        start = request.args.get('start')
+        end = request.args.get('end')
+
+        query = supabase.table('expenses') \
+            .select('*') \
+            .eq('org_id', org_id) \
+            .order('expense_date', desc=True)
+
+        if start:
+            query = query.gte('expense_date', start)
+        if end:
+            query = query.lte('expense_date', end)
+
+        res = query.execute()
+        return jsonify({'gastos': res.data}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/gastos/crear', methods=['POST'])
+def crear_gasto():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        if not data.get('category') or not data.get('amount'):
+            return jsonify({'error': 'Categoría y monto son obligatorios'}), 400
+
+        res = supabase.table('expenses').insert({
+            'org_id': data['org_id'],
+            'category': data['category'],
+            'description': data.get('description', ''),
+            'amount': data['amount'],
+            'expense_date': data.get('expense_date', date.today().isoformat()),
+            'created_by': payload['user_id'],
+        }).execute()
+
+        return jsonify({'gasto': res.data[0]}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/gastos/<int:gasto_id>', methods=['DELETE'])
+def eliminar_gasto(gasto_id):
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        supabase.table('expenses').delete().eq('id', gasto_id).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NUEVO — FINANZAS (resumen completo)
+# ============================================================================
+
+@app.route('/api/finanzas/resumen', methods=['GET'])
+def finanzas_resumen():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        org_id = int(request.args.get('org_id'))
+        start = request.args.get('start')
+        end = request.args.get('end')
+
+        # Ingresos por venta
+        sales_res = supabase.table('sales') \
+            .select('id, sale_date, total_amount') \
+            .eq('org_id', org_id).eq('status', 'completada') \
+            .gte('sale_date', start).lte('sale_date', end).execute()
+
+        ingresos = sum(s['total_amount'] for s in sales_res.data)
+
+        # Costo de mercancía vendida (aprox. con costo actual del producto)
+        costo_mercancia = 0
+        if sales_res.data:
+            sale_ids = [s['id'] for s in sales_res.data]
+            items_res = supabase.table('sale_items') \
+                .select('product_id, quantity').in_('sale_id', sale_ids).execute()
+            if items_res.data:
+                pids = list(set(i['product_id'] for i in items_res.data))
+                prods_res = supabase.table('products').select('id, unit_cost').in_('id', pids).execute()
+                cost_map = {p['id']: (p['unit_cost'] or 0) for p in prods_res.data}
+                costo_mercancia = sum(cost_map.get(i['product_id'], 0) * i['quantity'] for i in items_res.data)
+
+        # Gastos operativos registrados
+        exp_res = supabase.table('expenses') \
+            .select('category, amount, expense_date') \
+            .eq('org_id', org_id) \
+            .gte('expense_date', start).lte('expense_date', end).execute()
+
+        gastos_operativos = sum(e['amount'] for e in exp_res.data)
+
+        # Gastos por categoría
+        por_categoria = {}
+        for e in exp_res.data:
+            por_categoria[e['category']] = por_categoria.get(e['category'], 0) + e['amount']
+
+        utilidad = ingresos - costo_mercancia - gastos_operativos
+        margen = (utilidad / ingresos * 100) if ingresos > 0 else 0
+
+        # Ingresos vs gastos por mes
+        por_mes = {}
+        for s in sales_res.data:
+            m = int(s['sale_date'].split('-')[1])
+            if m not in por_mes:
+                por_mes[m] = {'ingresos': 0, 'gastos': 0}
+            por_mes[m]['ingresos'] += s['total_amount']
+        for e in exp_res.data:
+            m = int(e['expense_date'].split('-')[1])
+            if m not in por_mes:
+                por_mes[m] = {'ingresos': 0, 'gastos': 0}
+            por_mes[m]['gastos'] += e['amount']
+
+        chart = [
+            {'mes': MONTHS_ES.get(m, str(m)), 'ingresos': round(v['ingresos'], 2), 'gastos': round(v['gastos'], 2)}
+            for m, v in sorted(por_mes.items())
+        ]
+
+        # Flujo de caja: promedio diario neto últimos 60 días → proyección 30 días
+        d60 = (date.today() - timedelta(days=60)).isoformat()
+        s60 = supabase.table('sales').select('total_amount') \
+            .eq('org_id', org_id).eq('status', 'completada').gte('sale_date', d60).execute()
+        e60 = supabase.table('expenses').select('amount') \
+            .eq('org_id', org_id).gte('expense_date', d60).execute()
+        neto_60 = sum(s['total_amount'] for s in s60.data) - sum(e['amount'] for e in e60.data)
+        proyeccion_30 = round((neto_60 / 60) * 30, 2)
+
+        # Tips basados en reglas
+        tips = []
+        if not exp_res.data:
+            tips.append('Registra tus gastos (renta, servicios, mercancía) para conocer tu utilidad real.')
+        if margen < 20 and ingresos > 0 and exp_res.data:
+            tips.append(f'Tu margen neto es de {round(margen, 1)}%. Un negocio de retail saludable suele estar arriba del 20%. Revisa costos de mercancía o precios de venta.')
+        if por_categoria.get('Marketing', 0) == 0 and ingresos > 0:
+            tips.append('No registras inversión en marketing este periodo. Invertir 5-10% de tus ingresos en campañas suele acelerar el crecimiento.')
+        if ingresos > 0 and gastos_operativos / ingresos > 0.4:
+            tips.append('Tus gastos operativos superan el 40% de tus ingresos. Identifica qué categoría pesa más y busca reducirla.')
+        if proyeccion_30 < 0:
+            tips.append('Tu proyección de flujo a 30 días es negativa. Prioriza cobrar pendientes y pospón gastos no esenciales.')
+        if not tips:
+            tips.append('Tus finanzas se ven sanas este periodo. Mantén el registro constante de gastos para no perder visibilidad.')
+
+        return jsonify({
+            'ingresos': round(ingresos, 2),
+            'costo_mercancia': round(costo_mercancia, 2),
+            'gastos_operativos': round(gastos_operativos, 2),
+            'utilidad': round(utilidad, 2),
+            'margen': round(margen, 1),
+            'por_categoria': [{'categoria': k, 'monto': round(v, 2)} for k, v in sorted(por_categoria.items(), key=lambda x: -x[1])],
+            'chart': chart,
+            'proyeccion_30': proyeccion_30,
+            'tips': tips,
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NUEVO — CAMPAÑAS DE MARKETING
+# ============================================================================
+
+@app.route('/api/campanas', methods=['GET'])
+def get_campanas():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        org_id = int(request.args.get('org_id'))
+
+        res = supabase.table('campaigns') \
+            .select('*') \
+            .eq('org_id', org_id) \
+            .order('created_at', desc=True) \
+            .execute()
+
+        return jsonify({'campanas': res.data}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/campanas/crear', methods=['POST'])
+def crear_campana():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        if not data.get('name'):
+            return jsonify({'error': 'El nombre de la campaña es obligatorio'}), 400
+
+        res = supabase.table('campaigns').insert({
+            'org_id': data['org_id'],
+            'name': data['name'],
+            'platform': data.get('platform', 'instagram'),
+            'status': data.get('status', 'activa'),
+            'budget': data.get('budget', 0),
+            'spent': data.get('spent', 0),
+            'reach': data.get('reach', 0),
+            'impressions': data.get('impressions', 0),
+            'clicks': data.get('clicks', 0),
+            'conversions': data.get('conversions', 0),
+            'start_date': data.get('start_date'),
+            'end_date': data.get('end_date'),
+            'notes': data.get('notes', ''),
+        }).execute()
+
+        return jsonify({'campana': res.data[0]}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/campanas/<int:campana_id>', methods=['PATCH'])
+def editar_campana(campana_id):
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        updates = {}
+        for field in ['name', 'platform', 'status', 'budget', 'spent', 'reach',
+                      'impressions', 'clicks', 'conversions', 'start_date', 'end_date', 'notes']:
+            if field in data:
+                updates[field] = data[field]
+
+        if not updates:
+            return jsonify({'error': 'Nada que actualizar'}), 400
+
+        res = supabase.table('campaigns').update(updates).eq('id', campana_id).execute()
+        return jsonify({'campana': res.data[0]}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/campanas/<int:campana_id>', methods=['DELETE'])
+def eliminar_campana(campana_id):
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        supabase.table('campaigns').delete().eq('id', campana_id).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NUEVO — MARKETPLACE DE HERRAMIENTAS
+# ============================================================================
+
+@app.route('/api/tools', methods=['GET'])
+def get_tools():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        res = supabase.table('tools').select('*').eq('active', True).order('id').execute()
+        return jsonify({'tools': res.data}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/org-tools', methods=['GET'])
+def get_org_tools():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        org_id = int(request.args.get('org_id'))
+
+        ot_res = supabase.table('org_tools').select('tool_id, included_in_plan').eq('org_id', org_id).execute()
+        if not ot_res.data:
+            return jsonify({'active_keys': [], 'detail': []}), 200
+
+        tool_ids = [t['tool_id'] for t in ot_res.data]
+        tools_res = supabase.table('tools').select('id, key').in_('id', tool_ids).execute()
+        key_map = {t['id']: t['key'] for t in tools_res.data}
+
+        detail = [
+            {'key': key_map.get(t['tool_id']), 'included_in_plan': t['included_in_plan']}
+            for t in ot_res.data if key_map.get(t['tool_id'])
+        ]
+
+        return jsonify({
+            'active_keys': [d['key'] for d in detail],
+            'detail': detail
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/org-tools/activar', methods=['POST'])
+def activar_tool():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        org_id = data.get('org_id')
+        tool_key = data.get('tool_key')
+
+        tool_res = supabase.table('tools').select('id, monthly_price').eq('key', tool_key).execute()
+        if not tool_res.data:
+            return jsonify({'error': 'Herramienta no encontrada'}), 404
+
+        tool = tool_res.data[0]
+
+        # Evitar duplicados
+        existing = supabase.table('org_tools').select('id') \
+            .eq('org_id', org_id).eq('tool_id', tool['id']).execute()
+        if existing.data:
+            return jsonify({'error': 'Esta herramienta ya está activa'}), 400
+
+        supabase.table('org_tools').insert({
+            'org_id': org_id,
+            'tool_id': tool['id'],
+            'included_in_plan': False,
+        }).execute()
+
+        return jsonify({'status': 'ok', 'monthly_price': tool['monthly_price']}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NUEVO — MI PERFIL
+# ============================================================================
+
+@app.route('/api/perfil', methods=['GET'])
+def get_perfil():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'employee', 'admin']:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        org_id = int(request.args.get('org_id'))
+
+        org_res = supabase.table('organizations').select('*').eq('id', org_id).execute()
+        org = org_res.data[0] if org_res.data else None
+        if not org:
+            return jsonify({'error': 'Organización no encontrada'}), 404
+
+        # Suscripción y plan
+        sub_res = supabase.table('subscriptions').select('*').eq('org_id', org_id).execute()
+        sub = sub_res.data[0] if sub_res.data else None
+        plan = None
+        if sub:
+            plan_res = supabase.table('plans').select('*').eq('id', sub['plan_id']).execute()
+            plan = plan_res.data[0] if plan_res.data else None
+
+        # Usuarios de la org
+        users_res = supabase.table('users') \
+            .select('id, username, role, full_name, active, last_login, created_at') \
+            .eq('org_id', org_id).execute()
+
+        # Stats para el banner
+        all_sales = supabase.table('sales').select('sale_date, total_amount') \
+            .eq('org_id', org_id).eq('status', 'completada').execute()
+
+        total_ventas = len(all_sales.data)
+        total_ingresos = sum(s['total_amount'] for s in all_sales.data)
+
+        # Crecimiento: este mes vs mes anterior
+        today = date.today()
+        first_this = today.replace(day=1)
+        last_month_end = first_this - timedelta(days=1)
+        first_last = last_month_end.replace(day=1)
+
+        this_month = sum(s['total_amount'] for s in all_sales.data
+                         if s['sale_date'] >= first_this.isoformat())
+        last_month = sum(s['total_amount'] for s in all_sales.data
+                         if first_last.isoformat() <= s['sale_date'] <= last_month_end.isoformat())
+
+        growth_pct = round(((this_month - last_month) / last_month * 100), 1) if last_month > 0 else None
+
+        return jsonify({
+            'org': {
+                'id': org['id'],
+                'name': org['name'],
+                'industry': org.get('industry'),
+                'created_at': org.get('created_at'),
+            },
+            'plan': {
+                'name': plan['name'] if plan else 'Sin plan',
+                'base_price': plan['base_price'] if plan else 0,
+                'included_tools': plan['included_tools'] if plan else 0,
+                'max_users': plan['max_users'] if plan else None,
+            },
+            'subscription': {
+                'status': sub['status'] if sub else None,
+                'total_monthly': sub['total_monthly'] if sub else 0,
+                'next_billing': sub['next_billing'] if sub else None,
+            },
+            'users': users_res.data,
+            'stats': {
+                'total_ventas': total_ventas,
+                'total_ingresos': round(total_ingresos, 2),
+                'ventas_este_mes': round(this_month, 2),
+                'growth_pct': growth_pct,
+            }
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/perfil/change-password', methods=['POST'])
+def change_own_password():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        data = request.json
+        current = data.get('current_password')
+        new = data.get('new_password')
+
+        if not current or not new:
+            return jsonify({'error': 'Ambas contraseñas son obligatorias'}), 400
+        if len(new) < 6:
+            return jsonify({'error': 'La nueva contraseña debe tener al menos 6 caracteres'}), 400
+
+        user_res = supabase.table('users').select('password_hash').eq('id', payload['user_id']).execute()
+        if not user_res.data:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
+
+        if not verify_password(current, user_res.data[0]['password_hash']):
+            return jsonify({'error': 'La contraseña actual es incorrecta'}), 401
+
+        supabase.table('users').update({
+            'password_hash': hash_password(new)
+        }).eq('id', payload['user_id']).execute()
+
+        return jsonify({'status': 'Contraseña actualizada'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/org-users/<int:user_id>', methods=['PATCH'])
+def editar_usuario_org(user_id):
+    """El owner puede editar empleados de SU organización:
+    nombre, activo/inactivo y resetear contraseña."""
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        # Verificar que el usuario pertenece a la misma org (si no es admin)
+        target_res = supabase.table('users').select('org_id, role').eq('id', user_id).execute()
+        if not target_res.data:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
+
+        target = target_res.data[0]
+        if payload['role'] == 'owner' and target['org_id'] != payload['org_id']:
+            return jsonify({'error': 'No puedes editar usuarios de otra organización'}), 403
+
+        data = request.json
+        updates = {}
+        if 'full_name' in data:
+            updates['full_name'] = data['full_name']
+        if 'active' in data:
+            updates['active'] = data['active']
+        if data.get('new_password'):
+            if len(data['new_password']) < 6:
+                return jsonify({'error': 'La contraseña debe tener al menos 6 caracteres'}), 400
+            updates['password_hash'] = hash_password(data['new_password'])
+
+        if not updates:
+            return jsonify({'error': 'Nada que actualizar'}), 400
+
+        supabase.table('users').update(updates).eq('id', user_id).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NUEVO — VISTA DE EMPLEADO
+# ============================================================================
+
+@app.route('/api/employee/resumen', methods=['GET'])
+def employee_resumen():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'employee']:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        org_id = int(request.args.get('org_id'))
+        today = date.today().isoformat()
+
+        # Ventas de hoy
+        sales_res = supabase.table('sales') \
+            .select('total_amount') \
+            .eq('org_id', org_id).eq('status', 'completada') \
+            .eq('sale_date', today).execute()
+
+        ventas_hoy = len(sales_res.data)
+        total_hoy = sum(s['total_amount'] for s in sales_res.data)
+
+        # Alertas de stock
+        prods_res = supabase.table('products') \
+            .select('name, stock_current, stock_min') \
+            .eq('org_id', org_id).eq('active', True).execute()
+
+        alertas = [
+            {'name': p['name'], 'stock': p['stock_current'], 'agotado': p['stock_current'] == 0}
+            for p in prods_res.data if p['stock_current'] <= p['stock_min']
+        ]
+
+        return jsonify({
+            'ventas_hoy': ventas_hoy,
+            'total_hoy': round(total_hoy, 2),
+            'alertas_stock': alertas,
+            'total_productos': len(prods_res.data),
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# ENDPOINTS EXISTENTES — administración
 # ============================================================================
 
 @app.route('/api/create-user', methods=['POST'])
@@ -835,7 +1662,9 @@ def reset_password():
             return jsonify({'error': 'No tienes permisos'}), 403
         data = request.json
         password_hash = hash_password(data.get('new_password'))
-        supabase.table('users').update({'password_hash': password_hash}).eq('id', data.get('user_id')).execute()
+        supabase.table('users').update({
+            'password_hash': password_hash
+        }).eq('id', data.get('user_id')).execute()
         return jsonify({'status': 'Contraseña actualizada'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500

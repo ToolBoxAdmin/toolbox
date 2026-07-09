@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LogOut, Boxes, Loader, Rocket, BookOpen, User,
   ShoppingCart, Megaphone, BarChart3, DollarSign,
-  Plug, Plus, ChevronLeft, ChevronRight,
+  Plug, Plus, ChevronLeft, ChevronRight, Bell, Trash2, Check,
 } from "lucide-react";
 
 import DashboardHome from "./pages/DashboardHome";
@@ -11,11 +11,22 @@ import Ventas from "./pages/Ventas";
 import Productos from "./pages/Productos";
 import Inventario from "./pages/Inventario";
 import WorkInProgress from "./pages/WorkInProgress";
+import DashboardEmployee from "./pages/DashboardEmployee";
+import AgregarHerramienta from "./pages/AgregarHerramienta";
 
 type Section =
   | "dashboard" | "ventas" | "productos" | "inventario"
   | "clientes" | "pedidos" | "marketing" | "reportes"
-  | "finanzas" | "integraciones";
+  | "finanzas" | "integraciones" | "perfil";
+
+interface Notif {
+  id: number;
+  type: string;
+  title: string;
+  message: string;
+  read: boolean;
+  created_at: string;
+}
 
 const TOOLS: { id: Section; name: string; icon: any }[] = [
   { id: "dashboard",      name: "Dashboard",      icon: Boxes },
@@ -30,10 +41,18 @@ const TOOLS: { id: Section; name: string; icon: any }[] = [
   { id: "integraciones",  name: "Integraciones",   icon: Plug },
 ];
 
+// Secciones que aún no construimos (esta entrega)
 const WIP_SECTIONS: Section[] = [
-  "clientes", "pedidos", "marketing",
-  "reportes", "finanzas", "integraciones",
+  "clientes", "pedidos", "marketing", "reportes", "finanzas", "integraciones", "perfil",
 ];
+
+// Lo que puede ver un empleado
+const EMPLOYEE_SECTIONS: Section[] = ["dashboard", "ventas", "productos", "inventario", "pedidos"];
+
+const NOTIF_COLORS: Record<string, string> = {
+  stock_bajo: "bg-amber-400",
+  sin_ventas: "bg-red-400",
+};
 
 export default function Dashboard_Organization() {
   const navigate = useNavigate();
@@ -43,12 +62,23 @@ export default function Dashboard_Organization() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [section, setSection] = useState<Section>("dashboard");
 
+  // Herramientas activas de la org (null = aún no cargado → mostrar todas)
+  const [activeTools, setActiveTools] = useState<string[] | null>(null);
+  const [showMarketplace, setShowMarketplace] = useState(false);
+
+  // Notificaciones
+  const [notifs, setNotifs] = useState<Notif[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifs, setShowNotifs] = useState(false);
+
+  const token = localStorage.getItem("token") ?? "";
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+
   useEffect(() => {
-    const token = localStorage.getItem("token");
     const username = localStorage.getItem("username");
     const role = localStorage.getItem("role");
 
-    if (!token || role !== "owner") {
+    if (!token || (role !== "owner" && role !== "employee")) {
       navigate("/login");
       return;
     }
@@ -59,7 +89,7 @@ export default function Dashboard_Organization() {
       try {
         const res = await fetch(
           "https://toolbox-backend-rkit.onrender.com/api/dashboard-org",
-          { headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` } }
+          { headers }
         );
         if (!res.ok) { localStorage.clear(); navigate("/login"); return; }
         const data = await res.json();
@@ -74,6 +104,77 @@ export default function Dashboard_Organization() {
     fetchOrg();
   }, [navigate]);
 
+  // Herramientas activas
+  const fetchOrgTools = useCallback(async (orgId: number) => {
+    try {
+      const res = await fetch(
+        `https://toolbox-backend-rkit.onrender.com/api/org-tools?org_id=${orgId}`,
+        { headers }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.active_keys) && data.active_keys.length > 0) {
+        setActiveTools(data.active_keys);
+      }
+    } catch {
+      // Fail-open: si falla, mostramos todas
+    }
+  }, [token]);
+
+  // Notificaciones
+  const fetchNotifications = useCallback(async (orgId: number) => {
+    try {
+      const res = await fetch(
+        `https://toolbox-backend-rkit.onrender.com/api/notifications?org_id=${orgId}`,
+        { headers }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      setNotifs(data.notifications ?? []);
+      setUnreadCount(data.unread_count ?? 0);
+    } catch {
+      // silencioso
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!orgData?.org_id) return;
+    fetchOrgTools(orgData.org_id);
+    fetchNotifications(orgData.org_id);
+    const interval = setInterval(() => fetchNotifications(orgData.org_id), 60000);
+    return () => clearInterval(interval);
+  }, [orgData, fetchOrgTools, fetchNotifications]);
+
+  const markRead = async (id: number) => {
+    setNotifs((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
+    setUnreadCount((c) => Math.max(0, c - 1));
+    try {
+      await fetch(`https://toolbox-backend-rkit.onrender.com/api/notifications/${id}/read`, {
+        method: "POST", headers,
+      });
+    } catch { /* silencioso */ }
+  };
+
+  const markAllRead = async () => {
+    setNotifs((prev) => prev.map((n) => ({ ...n, read: true })));
+    setUnreadCount(0);
+    try {
+      await fetch("https://toolbox-backend-rkit.onrender.com/api/notifications/read-all", {
+        method: "POST", headers, body: JSON.stringify({ org_id: orgData.org_id }),
+      });
+    } catch { /* silencioso */ }
+  };
+
+  const deleteNotif = async (id: number, wasUnread: boolean) => {
+    setNotifs((prev) => prev.filter((n) => n.id !== id));
+    if (wasUnread) setUnreadCount((c) => Math.max(0, c - 1));
+    try {
+      await fetch(`https://toolbox-backend-rkit.onrender.com/api/notifications/${id}`, {
+        method: "DELETE", headers,
+      });
+    } catch { /* silencioso */ }
+  };
+
   const handleLogout = () => { localStorage.clear(); navigate("/login"); };
 
   if (loading) {
@@ -84,11 +185,16 @@ export default function Dashboard_Organization() {
     );
   }
 
+  const role = user?.role ?? "owner";
   const sidebarWidth = sidebarOpen ? "w-64" : "w-16";
   const mainMargin   = sidebarOpen ? "ml-64" : "ml-16";
 
+  // Nombre real del usuario logueado
+  const currentFullName =
+    orgData?.users?.find((u: any) => u.username === user?.username)?.full_name ?? user?.username;
+
   const sectionTitles: Record<Section, string> = {
-    dashboard:     `Bienvenido, ${orgData?.users?.[0]?.full_name ?? user?.username}`,
+    dashboard:     `Bienvenido, ${currentFullName}`,
     ventas:        "Ventas",
     productos:     "Productos",
     inventario:    "Inventario",
@@ -98,7 +204,19 @@ export default function Dashboard_Organization() {
     reportes:      "Reportes",
     finanzas:      "Finanzas",
     integraciones: "Integraciones",
+    perfil:        "Mi perfil",
   };
+
+  // Sidebar filtrado por herramientas activas y rol
+  const visibleTools = TOOLS.filter((t) => {
+    if (t.id === "dashboard") return true;
+    if (role === "employee" && !EMPLOYEE_SECTIONS.includes(t.id)) return false;
+    if (activeTools !== null && !activeTools.includes(t.id)) return false;
+    return true;
+  });
+
+  const formatNotifDate = (str: string) =>
+    new Date(str).toLocaleDateString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
   return (
     <div className="min-h-screen bg-background">
@@ -107,8 +225,81 @@ export default function Dashboard_Organization() {
       <header className="sticky top-0 z-40 w-full border-b border-border/80 bg-background/85 backdrop-blur">
         <div className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
           <img src="/Logo Transparente.png" alt="ToolBox" style={{ height: "auto", width: "140px" }} />
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">{user?.username}</span>
+
+          <div className="flex items-center gap-3">
+
+            {/* Campana de notificaciones */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifs((s) => !s)}
+                className="relative flex h-10 w-10 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <Bell size={17} />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--brand-red)] px-1 text-[10px] font-bold text-white">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {showNotifs && (
+                <>
+                  {/* Capa para cerrar al hacer click fuera */}
+                  <div className="fixed inset-0 z-40" onClick={() => setShowNotifs(false)} />
+
+                  <div className="absolute right-0 top-full mt-2 w-80 z-50 rounded-2xl border border-border bg-background shadow-xl overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                      <p className="text-sm font-semibold text-foreground">Notificaciones</p>
+                      {unreadCount > 0 && (
+                        <button
+                          onClick={markAllRead}
+                          className="text-xs text-[var(--brand-red)] font-medium hover:underline inline-flex items-center gap-1"
+                        >
+                          <Check size={11} /> Marcar todas
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="max-h-80 overflow-y-auto">
+                      {notifs.length === 0 ? (
+                        <p className="px-4 py-8 text-sm text-muted-foreground text-center">
+                          Sin notificaciones por ahora.
+                        </p>
+                      ) : (
+                        notifs.map((n) => (
+                          <div
+                            key={n.id}
+                            onClick={() => !n.read && markRead(n.id)}
+                            className={`flex items-start gap-3 px-4 py-3 border-b border-border last:border-b-0 cursor-pointer transition-colors ${
+                              n.read ? "opacity-60" : "bg-muted/30 hover:bg-muted/50"
+                            }`}
+                          >
+                            <div className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${NOTIF_COLORS[n.type] ?? "bg-gray-400"}`} />
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-sm leading-tight ${n.read ? "text-muted-foreground" : "font-medium text-foreground"}`}>
+                                {n.title}
+                              </p>
+                              {n.message && (
+                                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{n.message}</p>
+                              )}
+                              <p className="text-[10px] text-muted-foreground mt-1">{formatNotifDate(n.created_at)}</p>
+                            </div>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); deleteNotif(n.id, !n.read); }}
+                              className="text-muted-foreground hover:text-red-500 transition-colors shrink-0 mt-0.5"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <span className="text-sm text-muted-foreground hidden sm:block">{user?.username}</span>
             <button onClick={handleLogout}
               className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors">
               <LogOut size={16} />
@@ -133,7 +324,7 @@ export default function Dashboard_Organization() {
           )}
 
           <nav className="space-y-0.5">
-            {TOOLS.map((tool) => {
+            {visibleTools.map((tool) => {
               const Icon = tool.icon;
               const active = section === tool.id;
               return (
@@ -153,16 +344,23 @@ export default function Dashboard_Organization() {
           </nav>
 
           <div className="mt-auto border-t border-border pt-3 space-y-0.5">
-            <button title={!sidebarOpen ? "Agregar herramienta" : undefined}
-              className={`w-full text-left rounded-lg text-sm font-medium text-[var(--brand-red)] hover:bg-[var(--tile-red)] transition-colors flex items-center gap-3 ${
-                sidebarOpen ? "px-4 py-2.5" : "px-0 py-2.5 justify-center"
-              }`}>
-              <Plus size={18} className="shrink-0" />
-              {sidebarOpen && "Agregar herramienta"}
-            </button>
+            {role === "owner" && (
+              <button title={!sidebarOpen ? "Agregar herramienta" : undefined}
+                onClick={() => setShowMarketplace(true)}
+                className={`w-full text-left rounded-lg text-sm font-medium text-[var(--brand-red)] hover:bg-[var(--tile-red)] transition-colors flex items-center gap-3 ${
+                  sidebarOpen ? "px-4 py-2.5" : "px-0 py-2.5 justify-center"
+                }`}>
+                <Plus size={18} className="shrink-0" />
+                {sidebarOpen && "Agregar herramienta"}
+              </button>
+            )}
             <button title={!sidebarOpen ? "Mi perfil" : undefined}
-              className={`w-full text-left rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors flex items-center gap-3 ${
+              onClick={() => setSection("perfil")}
+              className={`w-full text-left rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${
                 sidebarOpen ? "px-4 py-2.5" : "px-0 py-2.5 justify-center"
+              } ${section === "perfil"
+                ? "bg-[var(--tile-red)] text-[var(--brand-red)]"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
               }`}>
               <User size={18} className="shrink-0" />
               {sidebarOpen && "Mi perfil"}
@@ -189,12 +387,24 @@ export default function Dashboard_Organization() {
           {section === "dashboard" && (
             <div className="mb-8">
               <h1 className="text-3xl font-bold text-foreground">{sectionTitles["dashboard"]}</h1>
-              <p className="mt-1.5 text-muted-foreground text-sm">Panel de administración · {orgData?.org_name}</p>
+              <p className="mt-1.5 text-muted-foreground text-sm">
+                {role === "employee" ? "Panel de operación" : "Panel de administración"} · {orgData?.org_name}
+              </p>
             </div>
           )}
 
+          {/* Router de secciones */}
           {section === "dashboard" && user?.token && orgData && (
-            <DashboardHome token={user.token} orgId={orgData.org_id} />
+            role === "employee" ? (
+              <DashboardEmployee
+                token={user.token}
+                orgId={orgData.org_id}
+                fullName={currentFullName}
+                onGoVentas={() => setSection("ventas")}
+              />
+            ) : (
+              <DashboardHome token={user.token} orgId={orgData.org_id} />
+            )
           )}
           {section === "ventas" && user?.token && orgData && (
             <Ventas token={user.token} orgId={orgData.org_id} />
@@ -210,6 +420,16 @@ export default function Dashboard_Organization() {
           )}
         </div>
       </main>
+
+      {/* Marketplace de herramientas */}
+      {showMarketplace && user?.token && orgData && (
+        <AgregarHerramienta
+          token={user.token}
+          orgId={orgData.org_id}
+          onClose={() => setShowMarketplace(false)}
+          onActivated={() => fetchOrgTools(orgData.org_id)}
+        />
+      )}
     </div>
   );
 }

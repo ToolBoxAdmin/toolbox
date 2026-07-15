@@ -100,7 +100,9 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
       if (!res.ok) return;
       const d = await res.json();
       setAddonCount(d.addon_count ?? 0);
-      setTotalMonthly(d.total_monthly ?? 0);
+      // Usamos el total proyectado: lo que se pagará una vez que las bajas
+      // pendientes se hagan efectivas, no lo que se cobra en el ciclo actual.
+      setTotalMonthly(d.total_monthly_proyectado ?? d.total_monthly ?? 0);
     } catch { /* silencioso */ }
   };
 
@@ -259,9 +261,7 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
                   </button>
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <p className="text-lg font-bold text-foreground">
-                    Plan {data.plan.name}{addonCount > 0 ? ` + ${addonCount} herramienta${addonCount > 1 ? "s" : ""}` : ""}
-                  </p>
+                  <p className="text-lg font-bold text-foreground">Plan {data.plan.name}</p>
                   {data.subscription.status && (
                     <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 capitalize">
                       {data.subscription.status}
@@ -269,8 +269,7 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  {formatCurrency(totalMonthly || data.subscription.total_monthly)}/mes · {data.plan.included_tools} herramientas incluidas
-                  {addonCount > 0 ? ` + ${addonCount} adicional${addonCount > 1 ? "es" : ""}` : ""}
+                  {formatCurrency(totalMonthly || data.subscription.total_monthly)}/mes
                 </p>
                 <p className="text-xs text-muted-foreground mt-3">
                   Próximo cobro: {formatDate(data.subscription.next_billing)}

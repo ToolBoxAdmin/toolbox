@@ -117,6 +117,15 @@ export default function AgregarHerramienta({ token, orgId, onClose, onActivated 
     }
   };
 
+  // Herramientas marcadas para baja: siguen cobrándose hasta su cancel_at,
+  // así que aquí calculamos cuánto bajará el total y cuándo, para dar
+  // confirmación visual de que la baja sí se registró.
+  const pendingTools = tools.filter((t) => t.status === "pendiente_baja");
+  const pendingSavings = pendingTools.reduce((sum, t) => sum + t.monthly_price, 0);
+  const nextChangeDate = pendingTools.length > 0
+    ? pendingTools.map((t) => t.cancel_at).sort()[0]
+    : null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4" onClick={onClose}>
       <div
@@ -232,14 +241,21 @@ export default function AgregarHerramienta({ token, orgId, onClose, onActivated 
         </div>
 
         {/* Footer con total en vivo */}
-        <div className="px-6 py-4 border-t border-border bg-muted/30 flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">
-            Al quitar una herramienta conservas acceso hasta el fin de tu ciclo de 30 días.
-          </p>
-          <div className="text-right shrink-0 ml-4">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total mensual</p>
-            <p className="text-sm font-bold text-foreground">{formatCurrency(totalMonthly)}/mes</p>
+        <div className="px-6 py-4 border-t border-border bg-muted/30">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground max-w-xs">
+              Al quitar una herramienta conservas acceso hasta el fin de tu ciclo de 30 días — por eso el total no baja de inmediato.
+            </p>
+            <div className="text-right shrink-0 ml-4">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total mensual</p>
+              <p className="text-sm font-bold text-foreground">{formatCurrency(totalMonthly)}/mes</p>
+            </div>
           </div>
+          {pendingSavings > 0 && nextChangeDate && (
+            <p className="text-[11px] text-amber-700 text-right mt-1.5">
+              Bajará a {formatCurrency(totalMonthly - pendingSavings)}/mes el {formatDate(nextChangeDate)}
+            </p>
+          )}
         </div>
       </div>
     </div>

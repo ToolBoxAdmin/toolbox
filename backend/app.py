@@ -1422,7 +1422,8 @@ def gestion_org_tools():
         today = date.today().isoformat()
 
         result = []
-        total_addons = 0
+        total_addons_actual = 0      # lo que se cobra este ciclo (incluye pendiente_baja)
+        total_addons_proyectado = 0  # lo que se cobrará una vez terminen las bajas pendientes
 
         for t in all_tools:
             ot = by_tool_id.get(t['id'])
@@ -1438,12 +1439,15 @@ def gestion_org_tools():
                 status = 'pendiente_baja'
                 activated_at = ot.get('activated_at')
                 cancel_at = ot['cancel_at']
-                total_addons += t['monthly_price']
+                total_addons_actual += t['monthly_price']
+                # no se suma a total_addons_proyectado: esta herramienta ya no
+                # seguirá cobrándose una vez pase su cancel_at
             else:
                 status = 'activa'
                 activated_at = ot.get('activated_at')
                 cancel_at = None
-                total_addons += t['monthly_price']
+                total_addons_actual += t['monthly_price']
+                total_addons_proyectado += t['monthly_price']
 
             result.append({
                 'key': t['key'],
@@ -1468,7 +1472,8 @@ def gestion_org_tools():
             'tools': result,
             'base_price': base_price,
             'addon_count': addon_count,
-            'total_monthly': round(base_price + total_addons, 2),
+            'total_monthly': round(base_price + total_addons_actual, 2),
+            'total_monthly_proyectado': round(base_price + total_addons_proyectado, 2),
         }), 200
 
     except Exception as e:

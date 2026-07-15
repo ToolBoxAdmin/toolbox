@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   LogOut, Boxes, Loader, Rocket, BookOpen, User,
   ShoppingCart, Megaphone, BarChart3, DollarSign,
-  Plug, Plus, ChevronLeft, ChevronRight, Bell, Trash2, Check, RefreshCw,
+  Plug, Plus, ChevronLeft, ChevronRight, Bell, Trash2, Check, RefreshCw, Lock,
 } from "lucide-react";
 
 import DashboardHome from "./pages/DashboardHome";
@@ -57,6 +57,31 @@ const NOTIF_COLORS: Record<string, string> = {
   stock_bajo: "bg-amber-400",
   sin_ventas: "bg-red-400",
 };
+
+// Herramientas que se activan/desactivan desde el marketplace
+const GATED_SECTIONS: Section[] = [
+  "ventas", "productos", "inventario", "clientes", "pedidos", "marketing", "reportes", "finanzas",
+];
+
+function ToolLocked({ name, onOpenMarketplace }: { name: string; onOpenMarketplace: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+      <div className="w-16 h-16 rounded-2xl bg-[var(--tile-red)] flex items-center justify-center mb-6">
+        <Lock size={26} className="text-[var(--brand-red)]" />
+      </div>
+      <h2 className="text-2xl font-bold text-foreground mb-2">{name} no está activa</h2>
+      <p className="text-muted-foreground text-sm max-w-xs mb-6">
+        Esta herramienta no forma parte de tu plan actual. Actívala desde el marketplace para volver a usarla.
+      </p>
+      <button
+        onClick={onOpenMarketplace}
+        className="inline-flex items-center gap-2 px-5 py-2.5 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity"
+      >
+        Ver herramientas disponibles
+      </button>
+    </div>
+  );
+}
 
 export default function Dashboard_Organization() {
   const navigate = useNavigate();
@@ -433,30 +458,38 @@ export default function Dashboard_Organization() {
               <DashboardHome token={user.token} orgId={orgData.org_id} />
             )
           )}
-          {section === "ventas" && user?.token && orgData && (
-            <Ventas token={user.token} orgId={orgData.org_id} />
+
+          {GATED_SECTIONS.includes(section) && activeTools !== null && !activeTools.includes(section) ? (
+            <ToolLocked name={sectionTitles[section]} onOpenMarketplace={() => setShowMarketplace(true)} />
+          ) : (
+            <>
+              {section === "ventas" && user?.token && orgData && (
+                <Ventas token={user.token} orgId={orgData.org_id} />
+              )}
+              {section === "productos" && user?.token && orgData && (
+                <Productos token={user.token} orgId={orgData.org_id} />
+              )}
+              {section === "inventario" && user?.token && orgData && (
+                <Inventario token={user.token} orgId={orgData.org_id} />
+              )}
+              {section === "clientes" && user?.token && orgData && (
+                <Clientes token={user.token} orgId={orgData.org_id} />
+              )}
+              {section === "pedidos" && user?.token && orgData && (
+                <Pedidos token={user.token} orgId={orgData.org_id} />
+              )}
+              {section === "marketing" && user?.token && orgData && (
+                <Marketing token={user.token} orgId={orgData.org_id} />
+              )}
+              {section === "reportes" && user?.token && orgData && (
+                <Reportes token={user.token} orgId={orgData.org_id} orgName={orgData.org_name} />
+              )}
+              {section === "finanzas" && user?.token && orgData && (
+                <Finanzas token={user.token} orgId={orgData.org_id} />
+              )}
+            </>
           )}
-          {section === "productos" && user?.token && orgData && (
-            <Productos token={user.token} orgId={orgData.org_id} />
-          )}
-          {section === "inventario" && user?.token && orgData && (
-            <Inventario token={user.token} orgId={orgData.org_id} />
-          )}
-          {section === "clientes" && user?.token && orgData && (
-            <Clientes token={user.token} orgId={orgData.org_id} />
-          )}
-          {section === "pedidos" && user?.token && orgData && (
-            <Pedidos token={user.token} orgId={orgData.org_id} />
-          )}
-          {section === "marketing" && user?.token && orgData && (
-            <Marketing token={user.token} orgId={orgData.org_id} />
-          )}
-          {section === "reportes" && user?.token && orgData && (
-            <Reportes token={user.token} orgId={orgData.org_id} orgName={orgData.org_name} />
-          )}
-          {section === "finanzas" && user?.token && orgData && (
-            <Finanzas token={user.token} orgId={orgData.org_id} />
-          )}
+
           {section === "perfil" && user?.token && orgData && (
             <MiPerfil token={user.token} orgId={orgData.org_id} role={role} />
           )}

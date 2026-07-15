@@ -1358,6 +1358,18 @@ def get_tools():
         return jsonify({'error': str(e)}), 500
 
 
+def _limpiar_org_tools_vencidas(org_id: int):
+    """Borra herramientas cuya baja (cancel_at) ya se cumplió.
+    Se llama antes de leer org_tools para que el acceso se corte
+    exactamente cuando termina el ciclo de 30 días pagado."""
+    today = date.today().isoformat()
+    vencidas = supabase.table('org_tools').select('id, cancel_at') \
+        .eq('org_id', org_id).not_.is_('cancel_at', 'null').execute()
+    for row in vencidas.data:
+        if row['cancel_at'] and row['cancel_at'] <= today:
+            supabase.table('org_tools').delete().eq('id', row['id']).execute()
+
+
 @app.route('/api/org-tools', methods=['GET'])
 def get_org_tools():
     try:
@@ -1366,6 +1378,7 @@ def get_org_tools():
             return jsonify({'error': 'Token inválido'}), 401
 
         org_id = int(request.args.get('org_id'))
+        _limpiar_org_tools_vencidas(org_id)
 
         ot_res = supabase.table('org_tools').select('tool_id, included_in_plan').eq('org_id', org_id).execute()
         if not ot_res.data:
@@ -1389,8 +1402,83 @@ def get_org_tools():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/org-tools/gestion', methods=['GET'])
+def gestion_org_tools():
+    """Vista completa para Mi Perfil y el marketplace: todas las herramientas
+    con su estado (incluida / activa / pendiente de baja / disponible),
+    fechas relevantes, y el total mensual calculado en vivo."""
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        org_id = int(request.args.get('org_id'))
+        _limpiar_org_tools_vencidas(org_id)
+
+        all_tools = supabase.table('tools').select('*').eq('active', True).order('id').execute().data
+        org_tools = supabase.table('org_tools').select('*').eq('org_id', org_id).execute().data
+        by_tool_id = {ot['tool_id']: ot for ot in org_tools}
+
+        today = date.today().isoformat()
+
+        result = []
+        total_addons = 0
+
+        for t in all_tools:
+            ot = by_tool_id.get(t['id'])
+            if not ot:
+                status = 'disponible'
+                activated_at = None
+                cancel_at = None
+            elif ot['included_in_plan']:
+                status = 'incluida'
+                activated_at = ot.get('activated_at')
+                cancel_at = None
+            elif ot.get('cancel_at'):
+                status = 'pendiente_baja'
+                activated_at = ot.get('activated_at')
+                cancel_at = ot['cancel_at']
+                total_addons += t['monthly_price']
+            else:
+                status = 'activa'
+                activated_at = ot.get('activated_at')
+                cancel_at = None
+                total_addons += t['monthly_price']
+
+            result.append({
+                'key': t['key'],
+                'name': t['name'],
+                'description': t['description'],
+                'monthly_price': t['monthly_price'],
+                'status': status,
+                'activated_at': activated_at,
+                'cancel_at': cancel_at,
+            })
+
+        # Plan base de la org
+        sub_res = supabase.table('subscriptions').select('plan_id').eq('org_id', org_id).execute()
+        base_price = 0
+        addon_count = sum(1 for r in result if r['status'] in ('activa', 'pendiente_baja'))
+        if sub_res.data:
+            plan_res = supabase.table('plans').select('base_price').eq('id', sub_res.data[0]['plan_id']).execute()
+            if plan_res.data:
+                base_price = plan_res.data[0]['base_price']
+
+        return jsonify({
+            'tools': result,
+            'base_price': base_price,
+            'addon_count': addon_count,
+            'total_monthly': round(base_price + total_addons, 2),
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/org-tools/activar', methods=['POST'])
 def activar_tool():
+    """Activa una herramienta nueva, o si estaba dada de baja pendiente
+    (cancel_at seteado), revierte la baja y la deja activa de nuevo."""
     try:
         payload = get_token_payload()
         if not payload or payload['role'] not in ['owner', 'admin']:
@@ -1406,19 +1494,71 @@ def activar_tool():
 
         tool = tool_res.data[0]
 
-        # Evitar duplicados
-        existing = supabase.table('org_tools').select('id') \
+        existing = supabase.table('org_tools').select('id, included_in_plan, cancel_at') \
             .eq('org_id', org_id).eq('tool_id', tool['id']).execute()
+
         if existing.data:
+            row = existing.data[0]
+            if row['included_in_plan']:
+                return jsonify({'error': 'Esta herramienta ya está incluida en tu plan'}), 400
+            if row.get('cancel_at'):
+                # Estaba pendiente de baja — la reactivamos
+                supabase.table('org_tools').update({'cancel_at': None}).eq('id', row['id']).execute()
+                return jsonify({'status': 'reactivada'}), 200
             return jsonify({'error': 'Esta herramienta ya está activa'}), 400
 
         supabase.table('org_tools').insert({
             'org_id': org_id,
             'tool_id': tool['id'],
             'included_in_plan': False,
+            'activated_at': date.today().isoformat(),
+            'cancel_at': None,
         }).execute()
 
-        return jsonify({'status': 'ok', 'monthly_price': tool['monthly_price']}), 201
+        return jsonify({'status': 'activada', 'monthly_price': tool['monthly_price']}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/org-tools/desactivar', methods=['POST'])
+def desactivar_tool():
+    """Marca una herramienta para darse de baja. No se quita al instante:
+    el dueño se comprometió a 30 días desde que la activó, así que conserva
+    acceso hasta que termine el ciclo actual (cancel_at)."""
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        org_id = data.get('org_id')
+        tool_key = data.get('tool_key')
+
+        tool_res = supabase.table('tools').select('id').eq('key', tool_key).execute()
+        if not tool_res.data:
+            return jsonify({'error': 'Herramienta no encontrada'}), 404
+        tool_id = tool_res.data[0]['id']
+
+        row_res = supabase.table('org_tools').select('id, included_in_plan, activated_at, cancel_at') \
+            .eq('org_id', org_id).eq('tool_id', tool_id).execute()
+        if not row_res.data:
+            return jsonify({'error': 'No tienes esta herramienta activa'}), 404
+
+        row = row_res.data[0]
+        if row['included_in_plan']:
+            return jsonify({'error': 'Esta herramienta es parte de tu plan base y no se puede quitar'}), 400
+        if row.get('cancel_at'):
+            return jsonify({'status': 'ya_pendiente', 'cancel_at': row['cancel_at']}), 200
+
+        activated_at = datetime.strptime(row['activated_at'], '%Y-%m-%d').date() if row.get('activated_at') else date.today()
+        dias_activa = (date.today() - activated_at).days
+        ciclos_completos = dias_activa // 30
+        cancel_at = activated_at + timedelta(days=(ciclos_completos + 1) * 30)
+
+        supabase.table('org_tools').update({'cancel_at': cancel_at.isoformat()}).eq('id', row['id']).execute()
+
+        return jsonify({'status': 'baja_programada', 'cancel_at': cancel_at.isoformat()}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500

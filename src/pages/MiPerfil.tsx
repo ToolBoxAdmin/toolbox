@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import {
   X, ChevronDown, KeyRound, UserPlus, Pencil, TrendingUp,
-  Building2, CreditCard, Users, Loader, Check,
+  Building2, CreditCard, Users, Loader, Check, Settings,
 } from "lucide-react";
+import AgregarHerramienta from "./AgregarHerramienta";
 
 interface MiPerfilProps {
   token: string;
@@ -51,6 +52,11 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // Plan dinámico: cuenta y precio total en vivo según herramientas activas
+  const [addonCount, setAddonCount] = useState(0);
+  const [totalMonthly, setTotalMonthly] = useState(0);
+  const [showMarketplace, setShowMarketplace] = useState(false);
+
   // Cambiar mi contraseña
   const [pwForm, setPwForm] = useState({ current: "", nueva: "", confirmar: "" });
   const [pwSubmitting, setPwSubmitting] = useState(false);
@@ -87,7 +93,18 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
     }
   };
 
-  useEffect(() => { fetchPerfil(); }, [orgId]);
+  const fetchGestion = async () => {
+    if (role !== "owner") return;
+    try {
+      const res = await fetch(`https://toolbox-backend-rkit.onrender.com/api/org-tools/gestion?org_id=${orgId}`, { headers });
+      if (!res.ok) return;
+      const d = await res.json();
+      setAddonCount(d.addon_count ?? 0);
+      setTotalMonthly(d.total_monthly ?? 0);
+    } catch { /* silencioso */ }
+  };
+
+  useEffect(() => { fetchPerfil(); fetchGestion(); }, [orgId]);
 
   const cambiarPassword = async () => {
     setPwError("");
@@ -228,12 +245,23 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
 
             {isOwner && (
               <div className="rounded-2xl border border-border bg-background p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <CreditCard size={15} className="text-muted-foreground" />
-                  <h3 className="text-sm font-semibold text-foreground">Mi plan</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <CreditCard size={15} className="text-muted-foreground" />
+                    <h3 className="text-sm font-semibold text-foreground">Mi plan</h3>
+                  </div>
+                  <button
+                    onClick={() => setShowMarketplace(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                  >
+                    <Settings size={12} />
+                    Gestionar herramientas
+                  </button>
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <p className="text-lg font-bold text-foreground">Plan {data.plan.name}</p>
+                  <p className="text-lg font-bold text-foreground">
+                    Plan {data.plan.name}{addonCount > 0 ? ` + ${addonCount} herramienta${addonCount > 1 ? "s" : ""}` : ""}
+                  </p>
                   {data.subscription.status && (
                     <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 capitalize">
                       {data.subscription.status}
@@ -241,7 +269,8 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  {formatCurrency(data.subscription.total_monthly)}/mes · {data.plan.included_tools} herramientas incluidas
+                  {formatCurrency(totalMonthly || data.subscription.total_monthly)}/mes · {data.plan.included_tools} herramientas incluidas
+                  {addonCount > 0 ? ` + ${addonCount} adicional${addonCount > 1 ? "es" : ""}` : ""}
                 </p>
                 <p className="text-xs text-muted-foreground mt-3">
                   Próximo cobro: {formatDate(data.subscription.next_billing)}
@@ -461,6 +490,16 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Marketplace de herramientas */}
+      {showMarketplace && (
+        <AgregarHerramienta
+          token={token}
+          orgId={orgId}
+          onClose={() => setShowMarketplace(false)}
+          onActivated={() => { fetchPerfil(); fetchGestion(); }}
+        />
       )}
     </div>
   );

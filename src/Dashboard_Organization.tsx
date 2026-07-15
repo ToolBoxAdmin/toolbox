@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   LogOut, Boxes, Loader, Rocket, BookOpen, User,
   ShoppingCart, Megaphone, BarChart3, DollarSign,
-  Plug, Plus, ChevronLeft, ChevronRight, Bell, Trash2, Check,
+  Plug, Plus, ChevronLeft, ChevronRight, Bell, Trash2, Check, RefreshCw,
 } from "lucide-react";
 
 import DashboardHome from "./pages/DashboardHome";
@@ -74,6 +74,7 @@ export default function Dashboard_Organization() {
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifs, setShowNotifs] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const token = localStorage.getItem("token") ?? "";
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
@@ -181,6 +182,13 @@ export default function Dashboard_Organization() {
 
   const handleLogout = () => { localStorage.clear(); navigate("/login"); };
 
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    // Recarga completa: vuelve a pedir todo a la base de datos sin depender
+    // de que cada página individual tenga su propia lógica de refetch.
+    setTimeout(() => window.location.reload(), 350);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -228,9 +236,24 @@ export default function Dashboard_Organization() {
       {/* Header */}
       <header className="sticky top-0 z-40 w-full border-b border-border/80 bg-background/85 backdrop-blur">
         <div className="flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
-          <img src="/Logo Transparente.png" alt="ToolBox" style={{ height: "auto", width: "140px" }} />
+          <button
+            onClick={() => navigate("/")}
+            title="Ir al sitio principal"
+            className="transition-opacity hover:opacity-80"
+          >
+            <img src="/Logo Transparente.png" alt="ToolBox" style={{ height: "auto", width: "140px" }} />
+          </button>
 
           <div className="flex items-center gap-3">
+
+            {/* Refrescar datos */}
+            <button
+              onClick={handleRefresh}
+              title="Actualizar datos"
+              className="flex h-10 w-10 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+            </button>
 
             {/* Campana de notificaciones */}
             <div className="relative">

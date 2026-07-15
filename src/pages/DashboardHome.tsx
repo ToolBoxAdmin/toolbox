@@ -169,28 +169,34 @@ export default function DashboardHome({ token, orgId }: DashboardHomeProps) {
         Authorization: `Bearer ${token}`,
       };
 
-      const [metricsRes, chartRes, topRes, invRes] = await Promise.all([
-        fetch(`https://toolbox-backend-rkit.onrender.com/api/dashboard/metrics?${params}`, { headers }),
-        fetch(`https://toolbox-backend-rkit.onrender.com/api/dashboard/ventas-chart?${params}`, { headers }),
-        fetch(`https://toolbox-backend-rkit.onrender.com/api/dashboard/top-productos?${params}`, { headers }),
-        fetch(`https://toolbox-backend-rkit.onrender.com/api/dashboard/inventario?org_id=${orgId}`, { headers }),
-      ]);
+      const endpoints = [
+        `https://toolbox-backend-rkit.onrender.com/api/dashboard/metrics?${params}`,
+        `https://toolbox-backend-rkit.onrender.com/api/dashboard/ventas-chart?${params}`,
+        `https://toolbox-backend-rkit.onrender.com/api/dashboard/top-productos?${params}`,
+        `https://toolbox-backend-rkit.onrender.com/api/dashboard/inventario?org_id=${orgId}`,
+      ];
 
-      if (!metricsRes.ok || !chartRes.ok || !topRes.ok || !invRes.ok) {
-        throw new Error("Error al cargar datos");
+      // allSettled: si una falla (ej. cold-start de Render en esa llamada puntual),
+      // las demás igual se procesan en vez de tronar todo el dashboard.
+      const results = await Promise.allSettled(
+        endpoints.map((url) => fetch(url, { headers }).then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }))
+      );
+
+      const [metricsResult, chartResult, topResult, invResult] = results;
+
+      if (metricsResult.status === "fulfilled") {
+        setMetrics(metricsResult.value);
+      } else {
+        // Las métricas son el corazón del dashboard; si fallan, sí mostramos error.
+        throw new Error("No se pudieron cargar las métricas");
       }
 
-      const [m, c, t, i] = await Promise.all([
-        metricsRes.json(),
-        chartRes.json(),
-        topRes.json(),
-        invRes.json(),
-      ]);
-
-      setMetrics(m);
-      setVentasChart(c);
-      setTopProductos(t);
-      setInventario(i);
+      setVentasChart(chartResult.status === "fulfilled" ? chartResult.value : []);
+      setTopProductos(topResult.status === "fulfilled" ? topResult.value : []);
+      setInventario(invResult.status === "fulfilled" ? invResult.value : []);
     } catch (e) {
       setError("No se pudieron cargar los datos. Intenta de nuevo.");
     } finally {

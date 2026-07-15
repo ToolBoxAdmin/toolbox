@@ -100,6 +100,7 @@ export default function Dashboard_Organization() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifs, setShowNotifs] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0);
 
   const token = localStorage.getItem("token") ?? "";
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
@@ -209,9 +210,17 @@ export default function Dashboard_Organization() {
 
   const handleRefresh = () => {
     setIsRefreshing(true);
-    // Recarga completa: vuelve a pedir todo a la base de datos sin depender
-    // de que cada página individual tenga su propia lógica de refetch.
-    setTimeout(() => window.location.reload(), 350);
+    // En vez de recargar toda la página (lo que te regresaba al Dashboard
+    // porque la sección no vive en la URL), incrementamos refreshToken.
+    // Se lo pasamos como `key` a la sección activa, así React la desmonta
+    // y la vuelve a montar — eso dispara su fetch interno de datos frescos
+    // sin sacarte de donde estabas.
+    setRefreshToken((k) => k + 1);
+    if (orgData?.org_id) {
+      fetchOrgTools(orgData.org_id);
+      fetchNotifications(orgData.org_id);
+    }
+    setTimeout(() => setIsRefreshing(false), 500);
   };
 
   if (loading) {
@@ -449,13 +458,14 @@ export default function Dashboard_Organization() {
           {section === "dashboard" && user?.token && orgData && (
             role === "employee" ? (
               <DashboardEmployee
+                key={refreshToken}
                 token={user.token}
                 orgId={orgData.org_id}
                 fullName={currentFullName}
                 onGoVentas={() => setSection("ventas")}
               />
             ) : (
-              <DashboardHome token={user.token} orgId={orgData.org_id} />
+              <DashboardHome key={refreshToken} token={user.token} orgId={orgData.org_id} />
             )
           )}
 
@@ -464,34 +474,34 @@ export default function Dashboard_Organization() {
           ) : (
             <>
               {section === "ventas" && user?.token && orgData && (
-                <Ventas token={user.token} orgId={orgData.org_id} />
+                <Ventas key={refreshToken} token={user.token} orgId={orgData.org_id} />
               )}
               {section === "productos" && user?.token && orgData && (
-                <Productos token={user.token} orgId={orgData.org_id} />
+                <Productos key={refreshToken} token={user.token} orgId={orgData.org_id} />
               )}
               {section === "inventario" && user?.token && orgData && (
-                <Inventario token={user.token} orgId={orgData.org_id} />
+                <Inventario key={refreshToken} token={user.token} orgId={orgData.org_id} />
               )}
               {section === "clientes" && user?.token && orgData && (
-                <Clientes token={user.token} orgId={orgData.org_id} />
+                <Clientes key={refreshToken} token={user.token} orgId={orgData.org_id} />
               )}
               {section === "pedidos" && user?.token && orgData && (
-                <Pedidos token={user.token} orgId={orgData.org_id} />
+                <Pedidos key={refreshToken} token={user.token} orgId={orgData.org_id} />
               )}
               {section === "marketing" && user?.token && orgData && (
-                <Marketing token={user.token} orgId={orgData.org_id} />
+                <Marketing key={refreshToken} token={user.token} orgId={orgData.org_id} />
               )}
               {section === "reportes" && user?.token && orgData && (
-                <Reportes token={user.token} orgId={orgData.org_id} orgName={orgData.org_name} />
+                <Reportes key={refreshToken} token={user.token} orgId={orgData.org_id} orgName={orgData.org_name} />
               )}
               {section === "finanzas" && user?.token && orgData && (
-                <Finanzas token={user.token} orgId={orgData.org_id} />
+                <Finanzas key={refreshToken} token={user.token} orgId={orgData.org_id} />
               )}
             </>
           )}
 
           {section === "perfil" && user?.token && orgData && (
-            <MiPerfil token={user.token} orgId={orgData.org_id} role={role} />
+            <MiPerfil key={refreshToken} token={user.token} orgId={orgData.org_id} role={role} />
           )}
           {WIP_SECTIONS.includes(section) && (
             <WorkInProgress section={sectionTitles[section]} />

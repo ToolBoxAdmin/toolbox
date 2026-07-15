@@ -1551,7 +1551,13 @@ def desactivar_tool():
         if row.get('cancel_at'):
             return jsonify({'status': 'ya_pendiente', 'cancel_at': row['cancel_at']}), 200
 
-        activated_at = datetime.strptime(row['activated_at'], '%Y-%m-%d').date() if row.get('activated_at') else date.today()
+        if row.get('activated_at'):
+            # activated_at puede venir como "2026-06-01" o como timestamp completo
+            # "2026-06-01T02:02:25.14731" según cómo haya quedado la columna — nos
+            # quedamos solo con los primeros 10 caracteres (YYYY-MM-DD).
+            activated_at = datetime.strptime(row['activated_at'][:10], '%Y-%m-%d').date()
+        else:
+            activated_at = date.today()
         dias_activa = (date.today() - activated_at).days
         ciclos_completos = dias_activa // 30
         cancel_at = activated_at + timedelta(days=(ciclos_completos + 1) * 30)

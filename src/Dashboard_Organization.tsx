@@ -239,7 +239,7 @@ export default function Dashboard_Organization() {
           <button
             onClick={() => navigate("/")}
             title="Ir al sitio principal"
-            className="transition-opacity hover:opacity-80"
+            className="cursor-pointer transition-opacity hover:opacity-80"
           >
             <img src="/Logo Transparente.png" alt="ToolBox" style={{ height: "auto", width: "140px" }} />
           </button>

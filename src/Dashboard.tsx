@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { LogOut, Loader, Plus, Trash2, KeyRound, X, Building2, User } from "lucide-react";
+import { LogOut, Loader, Plus, Trash2, KeyRound, X, Building2, User, Pencil, Power, Mail, Phone, MapPin } from "lucide-react";
 
 const API = "https://toolbox-backend-rkit.onrender.com";
 
@@ -17,6 +17,13 @@ export default function Dashboard() {
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState<any>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<any>(null);
+  const [showEditOrg, setShowEditOrg] = useState<any>(null);
+  const [editOrgForm, setEditOrgForm] = useState({
+    contact_email: "", contact_phone: "", street1: "", street2: "",
+    city: "", state: "", postal_code: "", country: "México", toolbox_charge_enabled: true,
+  });
+  const [editOrgSubmitting, setEditOrgSubmitting] = useState(false);
+  const [editOrgError, setEditOrgError] = useState("");
 
   // Forms
   const [orgForm, setOrgForm] = useState({ name: "", plan: "basic" });
@@ -126,6 +133,60 @@ export default function Dashboard() {
     finally { setFormLoading(false); }
   };
 
+  const openEditOrg = (org: any) => {
+    setShowEditOrg(org);
+    setEditOrgForm({
+      contact_email: org.contact_email ?? "",
+      contact_phone: org.contact_phone ?? "",
+      street1: org.street1 ?? "",
+      street2: org.street2 ?? "",
+      city: org.city ?? "",
+      state: org.state ?? "",
+      postal_code: org.postal_code ?? "",
+      country: org.country ?? "México",
+      toolbox_charge_enabled: org.toolbox_charge_enabled ?? true,
+    });
+    setEditOrgError("");
+  };
+
+  const guardarEditOrg = async () => {
+    if (!showEditOrg) return;
+    setEditOrgSubmitting(true);
+    setEditOrgError("");
+    try {
+      const res = await fetch(`${API}/api/organizacion`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ org_id: showEditOrg.id, ...editOrgForm }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || "Error al guardar");
+      }
+      setShowEditOrg(null);
+      fetchData();
+    } catch (e: any) {
+      setEditOrgError(e.message);
+    } finally {
+      setEditOrgSubmitting(false);
+    }
+  };
+
+  const toggleOrgToolbox = async (org: any) => {
+    const next = !org.toolbox_charge_enabled;
+    setData((prev: any) => ({
+      ...prev,
+      organizations: prev.organizations.map((o: any) => o.id === org.id ? { ...o, toolbox_charge_enabled: next } : o),
+    }));
+    try {
+      await fetch(`${API}/api/organizacion`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ org_id: org.id, toolbox_charge_enabled: next }),
+      });
+    } catch { fetchData(); }
+  };
+
   const handleLogout = () => { localStorage.clear(); navigate("/login"); };
 
   if (loading) return (
@@ -193,18 +254,44 @@ export default function Dashboard() {
               <thead className="bg-muted/50 border-b border-border">
                 <tr>
                   <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Nombre</th>
-                  <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Plan</th>
+                  <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Contacto</th>
                   <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Usuarios</th>
                   <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">Creada</th>
+                  <th className="px-6 py-3 text-left text-sm font-medium text-muted-foreground">ToolBox</th>
+                  <th className="px-6 py-3 w-12"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {data?.organizations?.map((org: any) => (
                   <tr key={org.id} className="hover:bg-muted/30 transition-colors">
                     <td className="px-6 py-4 text-sm font-medium text-foreground">{org.name}</td>
-                    <td className="px-6 py-4 text-sm text-muted-foreground">{org.plan}</td>
+                    <td className="px-6 py-4 text-sm text-muted-foreground">
+                      {org.contact_email || org.contact_phone ? (
+                        <div className="space-y-0.5">
+                          {org.contact_email && <p className="flex items-center gap-1.5 text-xs"><Mail size={11} />{org.contact_email}</p>}
+                          {org.contact_phone && <p className="flex items-center gap-1.5 text-xs"><Phone size={11} />{org.contact_phone}</p>}
+                        </div>
+                      ) : (
+                        <span className="text-xs">Sin datos</span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 text-sm text-muted-foreground">{org.users_count}</td>
                     <td className="px-6 py-4 text-sm text-muted-foreground">{new Date(org.created_at).toLocaleDateString()}</td>
+                    <td className="px-6 py-4">
+                      <button
+                        onClick={() => toggleOrgToolbox(org)}
+                        title={org.toolbox_charge_enabled ? "Desactivar cobro automático" : "Activar cobro automático"}
+                        className={`relative w-9 h-5 rounded-full transition-colors ${org.toolbox_charge_enabled ? "bg-[var(--brand-red)]" : "bg-muted"}`}
+                      >
+                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${org.toolbox_charge_enabled ? "translate-x-4" : ""}`} />
+                      </button>
+                    </td>
+                    <td className="px-6 py-4">
+                      <button onClick={() => openEditOrg(org)}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                        <Pencil size={13} />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -360,6 +447,61 @@ export default function Dashboard() {
                 Eliminar
               </button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* MODAL: Editar Organización (contacto, dirección, cobro de ToolBox) */}
+      {showEditOrg && (
+        <Modal title={`Editar ${showEditOrg.name}`} icon={<Pencil size={20} />} onClose={() => setShowEditOrg(null)}>
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-foreground mb-1"><Mail size={12} /> Correo</label>
+                <input type="email" value={editOrgForm.contact_email}
+                  onChange={(e) => setEditOrgForm((f) => ({ ...f, contact_email: e.target.value }))} className="input-field" />
+              </div>
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-foreground mb-1"><Phone size={12} /> Teléfono</label>
+                <input type="tel" value={editOrgForm.contact_phone}
+                  onChange={(e) => setEditOrgForm((f) => ({ ...f, contact_phone: e.target.value }))} className="input-field" />
+              </div>
+            </div>
+
+            <div>
+              <label className="flex items-center gap-1.5 text-sm font-medium text-foreground mb-1"><MapPin size={12} /> Calle y número</label>
+              <input type="text" value={editOrgForm.street1}
+                onChange={(e) => setEditOrgForm((f) => ({ ...f, street1: e.target.value }))} className="input-field" />
+            </div>
+            <input type="text" placeholder="Depto, referencias (opcional)" value={editOrgForm.street2}
+              onChange={(e) => setEditOrgForm((f) => ({ ...f, street2: e.target.value }))} className="input-field" />
+
+            <div className="grid grid-cols-2 gap-3">
+              <input type="text" placeholder="Ciudad" value={editOrgForm.city}
+                onChange={(e) => setEditOrgForm((f) => ({ ...f, city: e.target.value }))} className="input-field" />
+              <input type="text" placeholder="Estado" value={editOrgForm.state}
+                onChange={(e) => setEditOrgForm((f) => ({ ...f, state: e.target.value }))} className="input-field" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <input type="text" placeholder="Código postal" value={editOrgForm.postal_code}
+                onChange={(e) => setEditOrgForm((f) => ({ ...f, postal_code: e.target.value }))} className="input-field" />
+              <input type="text" placeholder="País" value={editOrgForm.country}
+                onChange={(e) => setEditOrgForm((f) => ({ ...f, country: e.target.value }))} className="input-field" />
+            </div>
+
+            <label className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 cursor-pointer">
+              <span className="flex items-center gap-1.5 text-sm text-foreground"><Power size={13} /> Cobro automático de ToolBox</span>
+              <button type="button"
+                onClick={() => setEditOrgForm((f) => ({ ...f, toolbox_charge_enabled: !f.toolbox_charge_enabled }))}
+                className={`relative w-9 h-5 rounded-full transition-colors ${editOrgForm.toolbox_charge_enabled ? "bg-[var(--brand-red)]" : "bg-muted"}`}>
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${editOrgForm.toolbox_charge_enabled ? "translate-x-4" : ""}`} />
+              </button>
+            </label>
+
+            {editOrgError && <p className="text-sm text-[var(--brand-red)]">{editOrgError}</p>}
+            <button onClick={guardarEditOrg} disabled={editOrgSubmitting} className="btn-primary w-full justify-center">
+              {editOrgSubmitting ? "Guardando..." : "Guardar cambios"}
+            </button>
           </div>
         </Modal>
       )}

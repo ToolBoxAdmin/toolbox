@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
-import { Plus, X, ChevronDown, Trash2, Lightbulb, TrendingUp, TrendingDown } from "lucide-react";
+import { Plus, X, ChevronDown, Trash2, Lightbulb, TrendingUp, TrendingDown, Repeat, Pause, Play } from "lucide-react";
 
 interface FinanzasProps {
   token: string;
@@ -33,7 +33,24 @@ interface Gasto {
   expense_date: string;
 }
 
+interface Recurrente {
+  id: number;
+  category: string;
+  description: string;
+  amount: number;
+  day_of_month: number;
+  active: boolean;
+}
+
 const CATEGORIAS = ["Mercancía", "Renta", "Servicios", "Nómina", "Marketing", "Envíos", "Otro"];
+
+const RECURRING_TEMPLATES = [
+  { label: "Renta", category: "Renta", day: 1 },
+  { label: "Luz / Servicios", category: "Servicios", day: 5 },
+  { label: "Nómina", category: "Nómina", day: 15 },
+  { label: "Internet", category: "Servicios", day: 10 },
+  { label: "Seguridad / Vigilancia", category: "Otro", day: 1 },
+];
 
 const PERIOD_LABELS: Record<Period, string> = {
   month: "Este mes", year: "Este año", all: "Todo", custom: "Personalizado",
@@ -75,6 +92,13 @@ export default function Finanzas({ token, orgId }: FinanzasProps) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
+  // Gastos recurrentes
+  const [recurrentes, setRecurrentes] = useState<Recurrente[]>([]);
+  const [showRecModal, setShowRecModal] = useState(false);
+  const [recForm, setRecForm] = useState({ category: "Renta", description: "", amount: "", day_of_month: "1" });
+  const [recSubmitting, setRecSubmitting] = useState(false);
+  const [recError, setRecError] = useState("");
+
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
   const range = getRange(period, custom);
 
@@ -104,6 +128,18 @@ export default function Finanzas({ token, orgId }: FinanzasProps) {
   }, [period, custom, orgId, token]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const fetchRecurrentes = async () => {
+    try {
+      const res = await fetch(`https://toolbox-backend-rkit.onrender.com/api/gastos-recurrentes?org_id=${orgId}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setRecurrentes(data.recurrentes ?? []);
+      }
+    } catch { /* silencioso */ }
+  };
+
+  useEffect(() => { fetchRecurrentes(); }, [orgId]);
 
   const crearGasto = async () => {
     if (!form.amount || parseFloat(form.amount) <= 0) {
@@ -136,6 +172,54 @@ export default function Finanzas({ token, orgId }: FinanzasProps) {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const aplicarPlantilla = (t: typeof RECURRING_TEMPLATES[number]) => {
+    setRecForm({ category: t.category, description: t.label, amount: "", day_of_month: t.day.toString() });
+  };
+
+  const crearRecurrente = async () => {
+    if (!recForm.amount || parseFloat(recForm.amount) <= 0) { setRecError("Ingresa un monto válido."); return; }
+    const day = parseInt(recForm.day_of_month);
+    if (!day || day < 1 || day > 28) { setRecError("El día debe estar entre 1 y 28."); return; }
+    setRecSubmitting(true);
+    setRecError("");
+    try {
+      const res = await fetch("https://toolbox-backend-rkit.onrender.com/api/gastos-recurrentes/crear", {
+        method: "POST", headers,
+        body: JSON.stringify({
+          org_id: orgId, category: recForm.category, description: recForm.description,
+          amount: parseFloat(recForm.amount), day_of_month: day,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Error al crear el gasto recurrente");
+      }
+      setShowRecModal(false);
+      setRecForm({ category: "Renta", description: "", amount: "", day_of_month: "1" });
+      fetchRecurrentes();
+    } catch (e: any) {
+      setRecError(e.message);
+    } finally {
+      setRecSubmitting(false);
+    }
+  };
+
+  const toggleRecurrente = async (r: Recurrente) => {
+    setRecurrentes((prev) => prev.map((x) => x.id === r.id ? { ...x, active: !x.active } : x));
+    try {
+      await fetch(`https://toolbox-backend-rkit.onrender.com/api/gastos-recurrentes/${r.id}`, {
+        method: "PATCH", headers, body: JSON.stringify({ active: !r.active }),
+      });
+    } catch { fetchRecurrentes(); }
+  };
+
+  const eliminarRecurrente = async (id: number) => {
+    setRecurrentes((prev) => prev.filter((r) => r.id !== id));
+    try {
+      await fetch(`https://toolbox-backend-rkit.onrender.com/api/gastos-recurrentes/${id}`, { method: "DELETE", headers });
+    } catch { /* silencioso */ }
   };
 
   const eliminarGasto = async (id: number) => {
@@ -312,6 +396,50 @@ export default function Finanzas({ token, orgId }: FinanzasProps) {
             </div>
           </div>
 
+          {/* Gastos recurrentes */}
+          <div className="rounded-2xl border border-border bg-background overflow-hidden mb-8">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Repeat size={15} className="text-muted-foreground" />
+                <h3 className="text-base font-semibold text-foreground">Gastos recurrentes</h3>
+              </div>
+              <button onClick={() => { setShowRecModal(true); setRecError(""); }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--brand-red)] text-white rounded-lg text-xs font-medium hover:opacity-90 transition-opacity">
+                <Plus size={13} />
+                Agregar
+              </button>
+            </div>
+            {recurrentes.length === 0 ? (
+              <p className="px-6 py-6 text-sm text-muted-foreground">
+                Configura tus gastos fijos (renta, nómina, servicios) para que se registren solos cada mes, justo cuando llegue su día.
+              </p>
+            ) : (
+              <div className="divide-y divide-border">
+                {recurrentes.map((r) => (
+                  <div key={r.id} className={`flex items-center justify-between px-6 py-3.5 ${!r.active ? "opacity-50" : ""}`}>
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{r.description || r.category}</p>
+                        <p className="text-xs text-muted-foreground">{r.category} · Día {r.day_of_month} de cada mes</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-semibold text-foreground">{formatCurrency(r.amount)}</span>
+                      <button onClick={() => toggleRecurrente(r)} title={r.active ? "Pausar" : "Reanudar"}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                        {r.active ? <Pause size={13} /> : <Play size={13} />}
+                      </button>
+                      <button onClick={() => eliminarRecurrente(r.id)} title="Eliminar"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-red-50 hover:text-red-500 transition-colors">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Tabla de gastos */}
           <div className="rounded-2xl border border-border bg-background overflow-hidden">
             <div className="px-6 py-4 border-b border-border">
@@ -343,6 +471,9 @@ export default function Finanzas({ token, orgId }: FinanzasProps) {
                           <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">
                             {g.category}
                           </span>
+                          {g.category === "ToolBox" && (
+                            <span className="ml-1.5 text-[10px] text-muted-foreground">Auto</span>
+                          )}
                         </td>
                         <td className="px-6 py-3.5 text-sm text-foreground">{g.description || "—"}</td>
                         <td className="px-6 py-3.5 text-sm font-semibold text-foreground text-right">{formatCurrency(g.amount)}</td>
@@ -417,6 +548,83 @@ export default function Finanzas({ token, orgId }: FinanzasProps) {
               <button onClick={crearGasto} disabled={submitting}
                 className="px-5 py-2.5 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
                 {submitting ? "Guardando..." : "Registrar gasto"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal nuevo gasto recurrente */}
+      {showRecModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+          <div className="w-full max-w-md bg-background rounded-2xl border border-border shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h3 className="text-lg font-semibold text-foreground">Nuevo gasto recurrente</h3>
+              <button onClick={() => setShowRecModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">Plantillas rápidas (opcional)</p>
+                <div className="flex flex-wrap gap-2">
+                  {RECURRING_TEMPLATES.map((t) => (
+                    <button key={t.label} type="button" onClick={() => aplicarPlantilla(t)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  O llena los campos de abajo con cualquier otro gasto que se repita mes con mes.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-1.5 block">Categoría</label>
+                  <div className="relative">
+                    <select value={recForm.category} onChange={(e) => setRecForm((f) => ({ ...f, category: e.target.value }))}
+                      className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background appearance-none focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)]">
+                      {CATEGORIAS.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-1.5 block">Monto *</label>
+                  <input type="number" placeholder="0.00" value={recForm.amount}
+                    onChange={(e) => setRecForm((f) => ({ ...f, amount: e.target.value }))}
+                    className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Descripción</label>
+                <input type="text" placeholder="Renta del local" value={recForm.description}
+                  onChange={(e) => setRecForm((f) => ({ ...f, description: e.target.value }))}
+                  className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-foreground mb-1.5 block">Día del mes en que se cobra</label>
+                <input type="number" min={1} max={28} value={recForm.day_of_month}
+                  onChange={(e) => setRecForm((f) => ({ ...f, day_of_month: e.target.value }))}
+                  className="w-28 border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)]" />
+                <p className="text-[11px] text-muted-foreground mt-1.5">Entre el 1 y el 28, para que funcione igual todos los meses.</p>
+              </div>
+
+              {recError && <div className="rounded-lg bg-[var(--tile-red)] px-4 py-3 text-sm text-[var(--brand-red)]">{recError}</div>}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border">
+              <button onClick={() => setShowRecModal(false)} className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+                Cancelar
+              </button>
+              <button onClick={crearRecurrente} disabled={recSubmitting}
+                className="px-5 py-2.5 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
+                {recSubmitting ? "Guardando..." : "Guardar recurrente"}
               </button>
             </div>
           </div>

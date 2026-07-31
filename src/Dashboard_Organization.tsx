@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LogOut, Boxes, Loader, Rocket, BookOpen, User,
@@ -90,6 +90,8 @@ export default function Dashboard_Organization() {
   const navigate = useNavigate();
   const [user, setUser] = useState<any>(null);
   const [orgData, setOrgData] = useState<any>(null);
+  const [timeoutMinutes, setTimeoutMinutes] = useState(0);
+  const lastActivityRef = useRef(Date.now());
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [section, setSection] = useState<Section>("dashboard");
@@ -210,6 +212,44 @@ export default function Dashboard_Organization() {
   };
 
   const handleLogout = () => { localStorage.clear(); navigate("/login"); };
+
+  // Cierre de sesión por inactividad — configurado por el dueño en Mi Perfil
+  useEffect(() => {
+    if (!orgData?.org_id) return;
+    (async () => {
+      try {
+        const res = await fetch(
+          `https://toolbox-backend-rkit.onrender.com/api/perfil?org_id=${orgData.org_id}`,
+          { headers }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setTimeoutMinutes(data.org?.inactivity_timeout_minutes ?? 0);
+        }
+      } catch { /* silencioso — sin timeout si falla */ }
+    })();
+  }, [orgData?.org_id]);
+
+  useEffect(() => {
+    if (!timeoutMinutes || timeoutMinutes <= 0) return;
+
+    const markActivity = () => { lastActivityRef.current = Date.now(); };
+    const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
+    events.forEach((ev) => window.addEventListener(ev, markActivity));
+
+    const interval = setInterval(() => {
+      const idleMs = Date.now() - lastActivityRef.current;
+      if (idleMs >= timeoutMinutes * 60 * 1000) {
+        clearInterval(interval);
+        handleLogout();
+      }
+    }, 30000);
+
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, markActivity));
+      clearInterval(interval);
+    };
+  }, [timeoutMinutes]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);

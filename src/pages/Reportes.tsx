@@ -1,4 +1,6 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 import { FileDown, Loader } from "lucide-react";
 
 interface ReportesProps {
@@ -49,9 +51,12 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
   const [topProductos, setTopProductos] = useState<any[]>([]);
   const [inventario, setInventario] = useState<any[]>([]);
   const [finanzas, setFinanzas] = useState<any>(null);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [generating, setGenerating] = useState(false);
 
+  const reportRef = useRef<HTMLDivElement>(null);
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
   const range = getRange(period, custom);
   const prevRange = getPreviousRange(range);
@@ -89,6 +94,19 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
   }, [period, custom, orgId, token]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // El logo es independiente del resto (no se recarga con los filtros de periodo)
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`https://toolbox-backend-rkit.onrender.com/api/perfil?org_id=${orgId}`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          setLogoUrl(data.org?.logo_url ?? null);
+        }
+      } catch { /* silencioso — el reporte funciona igual sin logo */ }
+    })();
+  }, [orgId]);
 
   // ── Genera los párrafos de análisis según los números ──
   const analisisVentas = () => {
@@ -139,7 +157,46 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
     return txt;
   };
 
-  const descargarPDF = () => { window.print(); };
+  // ── PDF real, descargado directo — sin diálogo de impresión del navegador ──
+  const descargarPDF = async () => {
+    if (!reportRef.current) return;
+    setGenerating(true);
+    setError("");
+    try {
+      const canvas = await html2canvas(reportRef.current, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true,
+      });
+      const imgData = canvas.toDataURL("image/png");
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      // Reportes largos se reparten en varias páginas automáticamente
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      const safeOrgName = orgName.replace(/[^a-zA-Z0-9]+/g, "-");
+      pdf.save(`Reporte-${safeOrgName}-${range.start}-al-${range.end}.pdf`);
+    } catch {
+      setError("No se pudo generar el PDF. Intenta de nuevo.");
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const fechaGeneracion = new Date().toLocaleDateString("es-MX", {
     day: "numeric", month: "long", year: "numeric",
@@ -147,28 +204,16 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
 
   return (
     <div>
-      {/* Estilos de impresión */}
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #reporte-imprimible, #reporte-imprimible * { visibility: visible; }
-          #reporte-imprimible {
-            position: absolute; left: 0; top: 0; width: 100%;
-            padding: 24px;
-          }
-        }
-      `}</style>
-
-      {/* Controles (no se imprimen) */}
+      {/* Controles */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold text-foreground">Reportes</h2>
           <p className="text-sm text-muted-foreground mt-0.5">Genera un reporte de tu negocio en PDF</p>
         </div>
-        <button onClick={descargarPDF} disabled={loading || !metrics}
+        <button onClick={descargarPDF} disabled={loading || !metrics || generating}
           className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
-          <FileDown size={16} />
-          Descargar PDF
+          {generating ? <Loader size={16} className="animate-spin" /> : <FileDown size={16} />}
+          {generating ? "Generando..." : "Descargar PDF"}
         </button>
       </div>
 
@@ -210,14 +255,18 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
           <Loader className="animate-spin text-[var(--brand-red)]" size={28} />
         </div>
       ) : metrics && finanzas ? (
-        /* ══════════ EL REPORTE (esto es lo que se imprime) ══════════ */
-        <div id="reporte-imprimible" className="rounded-2xl border border-border bg-white p-10 max-w-3xl">
+        /* ══════════ EL REPORTE (esto es lo que se convierte a PDF) ══════════ */
+        <div ref={reportRef} className="rounded-2xl border border-border bg-white p-10 max-w-3xl">
 
           {/* Encabezado */}
           <div className="border-b-2 border-[#1A2332] pb-6 mb-8">
-            <p className="text-xs font-semibold uppercase tracking-widest text-[var(--brand-red)] mb-2">
-              Reporte de negocio · ToolBox
-            </p>
+            {logoUrl ? (
+              <img src={logoUrl} alt={orgName} crossOrigin="anonymous" className="h-14 mb-4 object-contain" />
+            ) : (
+              <p className="text-xs font-semibold uppercase tracking-widest text-[var(--brand-red)] mb-2">
+                Reporte de negocio · ToolBox
+              </p>
+            )}
             <h1 className="text-3xl font-bold text-[#1A2332]">{orgName}</h1>
             <p className="text-sm text-gray-500 mt-2">
               Periodo: {range.start} al {range.end} · Generado el {fechaGeneracion}

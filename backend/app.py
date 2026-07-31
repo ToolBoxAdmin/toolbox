@@ -157,6 +157,77 @@ def check_and_generate_notifications(org_id: int):
     except Exception as e:
         print(f"Error generando notificaciones: {e}", file=sys.stderr, flush=True)
 
+
+def _calcular_costo_toolbox(org_id: int) -> float:
+    """Cuánto le toca pagar a la org este mes por su plan + herramientas
+    activas (incluye las que están 'pendiente_baja' — siguen cobrándose
+    hasta que termine su ciclo)."""
+    sub_res = supabase.table('subscriptions').select('plan_id').eq('org_id', org_id).execute()
+    base_price = 0
+    if sub_res.data:
+        plan_res = supabase.table('plans').select('base_price').eq('id', sub_res.data[0]['plan_id']).execute()
+        if plan_res.data:
+            base_price = plan_res.data[0]['base_price']
+
+    org_tools = supabase.table('org_tools').select('tool_id, included_in_plan').eq('org_id', org_id).execute()
+    addon_total = 0
+    if org_tools.data:
+        addon_tool_ids = [t['tool_id'] for t in org_tools.data if not t['included_in_plan']]
+        if addon_tool_ids:
+            tools_res = supabase.table('tools').select('id, monthly_price').in_('id', addon_tool_ids).execute()
+            addon_total = sum(t['monthly_price'] for t in tools_res.data)
+
+    return base_price + addon_total
+
+
+def check_and_generate_recurring_expenses(org_id: int):
+    """Genera automáticamente los gastos recurrentes del mes (plantillas o
+    personalizados) una vez que su día ya pasó — nunca antes, nunca dos
+    veces en el mismo mes. También agrega el cobro de ToolBox si el
+    negocio lo tiene activado."""
+    try:
+        today = date.today()
+        current_month = today.strftime('%Y-%m')
+
+        # 1. Gastos recurrentes definidos por el usuario
+        recurring = supabase.table('recurring_expenses') \
+            .select('*').eq('org_id', org_id).eq('active', True).execute()
+
+        for r in recurring.data:
+            if r.get('last_generated_month') == current_month:
+                continue
+            if today.day < r['day_of_month']:
+                continue
+            supabase.table('expenses').insert({
+                'org_id': org_id,
+                'category': r['category'],
+                'description': r.get('description', ''),
+                'amount': r['amount'],
+                'expense_date': today.isoformat(),
+            }).execute()
+            supabase.table('recurring_expenses').update({
+                'last_generated_month': current_month
+            }).eq('id', r['id']).execute()
+
+        # 2. Cobro de ToolBox (si está activado para esta org)
+        org_res = supabase.table('organizations').select('toolbox_charge_enabled').eq('id', org_id).execute()
+        if org_res.data and org_res.data[0].get('toolbox_charge_enabled', True):
+            existing_charge = supabase.table('expenses').select('id') \
+                .eq('org_id', org_id).eq('category', 'ToolBox') \
+                .gte('expense_date', today.replace(day=1).isoformat()).execute()
+            if not existing_charge.data:
+                monto = _calcular_costo_toolbox(org_id)
+                if monto > 0:
+                    supabase.table('expenses').insert({
+                        'org_id': org_id,
+                        'category': 'ToolBox',
+                        'description': 'Suscripción mensual ToolBox (plan + herramientas activas)',
+                        'amount': monto,
+                        'expense_date': today.isoformat(),
+                    }).execute()
+    except Exception as e:
+        print(f"Error generando gastos recurrentes: {e}", file=sys.stderr, flush=True)
+
 # ============================================================================
 # HEALTH CHECK
 # ============================================================================
@@ -1274,6 +1345,8 @@ def get_gastos():
         start = request.args.get('start')
         end = request.args.get('end')
 
+        check_and_generate_recurring_expenses(org_id)
+
         query = supabase.table('expenses') \
             .select('*') \
             .eq('org_id', org_id) \
@@ -1331,6 +1404,93 @@ def eliminar_gasto(gasto_id):
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
+# NUEVO — GASTOS RECURRENTES (plantillas y personalizados)
+# ============================================================================
+
+@app.route('/api/gastos-recurrentes', methods=['GET'])
+def get_gastos_recurrentes():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        org_id = int(request.args.get('org_id'))
+        res = supabase.table('recurring_expenses') \
+            .select('*').eq('org_id', org_id).order('day_of_month').execute()
+
+        return jsonify({'recurrentes': res.data}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/gastos-recurrentes/crear', methods=['POST'])
+def crear_gasto_recurrente():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        if not data.get('category') or not data.get('amount') or not data.get('day_of_month'):
+            return jsonify({'error': 'Categoría, monto y día del mes son obligatorios'}), 400
+
+        day = int(data['day_of_month'])
+        if day < 1 or day > 28:
+            return jsonify({'error': 'El día debe estar entre 1 y 28'}), 400
+
+        res = supabase.table('recurring_expenses').insert({
+            'org_id': data['org_id'],
+            'category': data['category'],
+            'description': data.get('description', ''),
+            'amount': data['amount'],
+            'day_of_month': day,
+            'active': True,
+        }).execute()
+
+        return jsonify({'recurrente': res.data[0]}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/gastos-recurrentes/<int:rec_id>', methods=['PATCH'])
+def editar_gasto_recurrente(rec_id):
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        updates = {}
+        for field in ['category', 'description', 'amount', 'day_of_month', 'active']:
+            if field in data:
+                updates[field] = data[field]
+
+        if not updates:
+            return jsonify({'error': 'Nada que actualizar'}), 400
+
+        res = supabase.table('recurring_expenses').update(updates).eq('id', rec_id).execute()
+        return jsonify({'recurrente': res.data[0]}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/gastos-recurrentes/<int:rec_id>', methods=['DELETE'])
+def eliminar_gasto_recurrente(rec_id):
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        supabase.table('recurring_expenses').delete().eq('id', rec_id).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
 # NUEVO — FINANZAS (resumen completo)
 # ============================================================================
 
@@ -1344,6 +1504,8 @@ def finanzas_resumen():
         org_id = int(request.args.get('org_id'))
         start = request.args.get('start')
         end = request.args.get('end')
+
+        check_and_generate_recurring_expenses(org_id)
 
         # Ingresos por venta
         sales_res = supabase.table('sales') \
@@ -1420,6 +1582,29 @@ def finanzas_resumen():
             tips.append('Tus gastos operativos superan el 40% de tus ingresos. Identifica qué categoría pesa más y busca reducirla.')
         if proyeccion_30 < 0:
             tips.append('Tu proyección de flujo a 30 días es negativa. Prioriza cobrar pendientes y pospón gastos no esenciales.')
+
+        # Gasto concentrado en una sola categoría
+        if gastos_operativos > 0 and por_categoria:
+            top_cat_name = max(por_categoria, key=por_categoria.get)
+            top_cat_monto = por_categoria[top_cat_name]
+            if top_cat_monto / gastos_operativos > 0.5:
+                tips.append(f"\"{top_cat_name}\" concentra más de la mitad de tus gastos operativos. Vale la pena revisar si se puede negociar o reducir.")
+
+        # Costo de mercancía alto respecto a ingresos
+        if ingresos > 0 and costo_mercancia / ingresos > 0.55:
+            tips.append('El costo de tu mercancía supera el 55% de tus ingresos. Revisa precios de proveedores o ajusta tus precios de venta.')
+
+        # Utilidad cayendo varios meses seguidos (aprox. ingresos - gastos por mes)
+        if len(chart) >= 3:
+            utilidades_mensuales = [c['ingresos'] - c['gastos'] for c in chart[-3:]]
+            if utilidades_mensuales[0] > utilidades_mensuales[1] > utilidades_mensuales[2]:
+                tips.append('Tu utilidad ha bajado dos meses seguidos. Es buen momento para revisar precios, gastos y qué está cambiando en tus ventas.')
+
+        # Sin gastos recurrentes configurados
+        rec_count = supabase.table('recurring_expenses').select('id').eq('org_id', org_id).execute()
+        if not rec_count.data and exp_res.data:
+            tips.append('Configura tus gastos fijos (renta, nómina, servicios) como recurrentes para que se registren solos cada mes.')
+
         if not tips:
             tips.append('Tus finanzas se ven sanas este periodo. Mantén el registro constante de gastos para no perder visibilidad.')
 
@@ -1818,6 +2003,13 @@ def get_perfil():
 
         growth_pct = round(((this_month - last_month) / last_month * 100), 1) if last_month > 0 else None
 
+        # Mejor día de ventas registrado — el "fun fact" del banner
+        by_date = {}
+        for s in all_sales.data:
+            by_date[s['sale_date']] = by_date.get(s['sale_date'], 0) + s['total_amount']
+        best_day_date = max(by_date, key=by_date.get) if by_date else None
+        best_day_total = by_date.get(best_day_date, 0) if best_day_date else 0
+
         return jsonify({
             'org': {
                 'id': org['id'],
@@ -1825,6 +2017,17 @@ def get_perfil():
                 'industry': org.get('industry'),
                 'created_at': org.get('created_at'),
                 'contact_cadence_days': org.get('contact_cadence_days', 30),
+                'logo_url': org.get('logo_url'),
+                'contact_email': org.get('contact_email'),
+                'contact_phone': org.get('contact_phone'),
+                'street1': org.get('street1'),
+                'street2': org.get('street2'),
+                'city': org.get('city'),
+                'state': org.get('state'),
+                'postal_code': org.get('postal_code'),
+                'country': org.get('country'),
+                'toolbox_charge_enabled': org.get('toolbox_charge_enabled', True),
+                'inactivity_timeout_minutes': org.get('inactivity_timeout_minutes', 0),
             },
             'plan': {
                 'name': plan['name'] if plan else 'Sin plan',
@@ -1843,6 +2046,8 @@ def get_perfil():
                 'total_ingresos': round(total_ingresos, 2),
                 'ventas_este_mes': round(this_month, 2),
                 'growth_pct': growth_pct,
+                'best_day_date': best_day_date,
+                'best_day_total': round(best_day_total, 2),
             }
         }), 200
 
@@ -1868,6 +2073,83 @@ def set_contact_cadence():
 
         supabase.table('organizations').update({'contact_cadence_days': days}).eq('id', org_id).execute()
         return jsonify({'status': 'ok', 'contact_cadence_days': days}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/organizacion', methods=['PATCH'])
+def editar_organizacion():
+    """Datos del negocio: contacto, dirección, logo, y preferencias.
+    El owner solo puede editar su propia org; el admin puede editar
+    cualquiera (por ejemplo para desactivar el cobro de ToolBox a un
+    cliente específico)."""
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        org_id = data.get('org_id')
+
+        if payload['role'] == 'owner' and org_id != payload.get('org_id'):
+            return jsonify({'error': 'No puedes editar otra organización'}), 403
+
+        updates = {}
+        for field in ['contact_email', 'contact_phone', 'street1', 'street2', 'city',
+                      'state', 'postal_code', 'country', 'inactivity_timeout_minutes']:
+            if field in data:
+                updates[field] = data[field]
+
+        # Solo el admin puede forzar el cobro de ToolBox on/off para cualquier cliente;
+        # el owner también puede tocar el suyo propio (transparencia total).
+        if 'toolbox_charge_enabled' in data:
+            updates['toolbox_charge_enabled'] = bool(data['toolbox_charge_enabled'])
+
+        if not updates:
+            return jsonify({'error': 'Nada que actualizar'}), 400
+
+        supabase.table('organizations').update(updates).eq('id', org_id).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/organizacion/logo', methods=['POST'])
+def subir_logo_organizacion():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        org_id = data.get('org_id')
+
+        if payload['role'] == 'owner' and org_id != payload.get('org_id'):
+            return jsonify({'error': 'No puedes editar otra organización'}), 403
+
+        image_data = data.get('image_data')
+        content_type = data.get('content_type', 'image/jpeg')
+
+        if not image_data:
+            return jsonify({'error': 'No se recibió imagen'}), 400
+
+        image_bytes = base64.b64decode(image_data)
+        if len(image_bytes) > 2 * 1024 * 1024:
+            return jsonify({'error': 'La imagen no puede superar 2MB'}), 400
+
+        ext = 'jpg' if 'jpeg' in content_type else content_type.split('/')[-1]
+        filename = f"org-{org_id}/logo.{ext}"
+
+        supabase.storage.from_('org-logos').upload(
+            filename, image_bytes, {'content-type': content_type, 'upsert': 'true'}
+        )
+        public_url = supabase.storage.from_('org-logos').get_public_url(filename)
+
+        supabase.table('organizations').update({'logo_url': public_url}).eq('id', org_id).execute()
+
+        return jsonify({'logo_url': public_url}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500

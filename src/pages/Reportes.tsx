@@ -1,6 +1,5 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
 import { FileDown, Loader } from "lucide-react";
 
 interface ReportesProps {
@@ -16,6 +15,17 @@ interface PeriodRange { start: string; end: string; }
 const PERIOD_LABELS: Record<Period, string> = {
   month: "Este mes", year: "Este año", all: "Todo", custom: "Personalizado",
 };
+
+const BRAND_RED: [number, number, number] = [255, 45, 45];
+const NAVY: [number, number, number] = [26, 35, 50];
+const GRAY_LIGHT: [number, number, number] = [249, 250, 251];
+const GRAY_BORDER: [number, number, number] = [229, 231, 235];
+const GRAY_TEXT: [number, number, number] = [107, 114, 128];
+const GRAY_BODY: [number, number, number] = [55, 65, 81];
+const GRAY_DARK: [number, number, number] = [31, 41, 55];
+const GREEN: [number, number, number] = [5, 150, 105];
+const RED: [number, number, number] = [239, 68, 68];
+const AMBER_TEXT: [number, number, number] = [146, 64, 14];
 
 function getRange(period: Period, custom: PeriodRange): PeriodRange {
   const today = new Date();
@@ -42,6 +52,18 @@ function formatCurrency(n: number) {
   return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 2 }).format(n);
 }
 
+// Convierte la URL del logo a base64 para poder incrustarlo en el PDF
+async function urlToDataURL(url: string): Promise<string> {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 export default function Reportes({ token, orgId, orgName }: ReportesProps) {
   const [period, setPeriod] = useState<Period>("month");
   const [custom, setCustom] = useState<PeriodRange>({ start: "", end: "" });
@@ -56,7 +78,6 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
   const [error, setError] = useState("");
   const [generating, setGenerating] = useState(false);
 
-  const reportRef = useRef<HTMLDivElement>(null);
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
   const range = getRange(period, custom);
   const prevRange = getPreviousRange(range);
@@ -95,7 +116,6 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // El logo es independiente del resto (no se recarga con los filtros de periodo)
   useEffect(() => {
     (async () => {
       try {
@@ -157,51 +177,186 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
     return txt;
   };
 
-  // ── PDF real, descargado directo — sin diálogo de impresión del navegador ──
+  const fechaGeneracion = new Date().toLocaleDateString("es-MX", {
+    day: "numeric", month: "long", year: "numeric",
+  });
+
+  // ── PDF construido directamente con jsPDF — sin capturar la pantalla,
+  // así que ningún color de CSS puede tronarlo. ──
   const descargarPDF = async () => {
-    if (!reportRef.current) return;
+    if (!metrics || !finanzas) return;
     setGenerating(true);
     setError("");
     try {
-      const canvas = await html2canvas(reportRef.current, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-        onclone: (clonedDoc) => {
-          // Tailwind v4 le asigna un border-color por default a TODOS los
-          // elementos (aunque no tengan borde visible), y ese default usa
-          // oklch() — lo mismo que ya sabemos que html2canvas no puede leer.
-          // Aquí sobreescribimos ese default con hexadecimal en la copia
-          // que se va a capturar, sin tocar la página real.
-          const override = clonedDoc.createElement("style");
-          override.innerHTML = `
-            * {
-              border-color: #e5e7eb !important;
-              outline-color: #e5e7eb !important;
-            }
-          `;
-          clonedDoc.head.appendChild(override);
-        },
-      });
-      const imgData = canvas.toDataURL("image/png");
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      const margin = 15;
+      const contentWidth = pageWidth - margin * 2;
+      let y = 20;
 
-      let heightLeft = imgHeight;
-      let position = 0;
+      const checkPageBreak = (needed: number) => {
+        if (y + needed > pageHeight - 15) {
+          pdf.addPage();
+          y = 20;
+        }
+      };
 
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
+      // ── Encabezado ──
+      let logoDrawn = false;
+      if (logoUrl) {
+        try {
+          const dataUrl = await urlToDataURL(logoUrl);
+          const props = pdf.getImageProperties(dataUrl);
+          const logoHeight = 14;
+          const logoWidth = (props.width / props.height) * logoHeight;
+          pdf.addImage(dataUrl, "JPEG", margin, y, logoWidth, logoHeight);
+          y += logoHeight + 4;
+          logoDrawn = true;
+        } catch { /* si el logo falla, seguimos con el encabezado de texto */ }
+      }
+      if (!logoDrawn) {
+        pdf.setTextColor(...BRAND_RED);
+        pdf.setFontSize(9);
+        pdf.setFont("helvetica", "bold");
+        pdf.text("REPORTE DE NEGOCIO · TOOLBOX", margin, y);
+        y += 7;
+      }
 
-      // Reportes largos se reparten en varias páginas automáticamente
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+      pdf.setTextColor(...NAVY);
+      pdf.setFontSize(20);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(orgName, margin, y);
+      y += 6;
+
+      pdf.setTextColor(...GRAY_TEXT);
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`Periodo: ${range.start} al ${range.end}  ·  Generado el ${fechaGeneracion}`, margin, y);
+      y += 4;
+
+      pdf.setDrawColor(...NAVY);
+      pdf.setLineWidth(0.6);
+      pdf.line(margin, y, pageWidth - margin, y);
+      y += 10;
+
+      // ── Resumen ejecutivo (4 cuadros) ──
+      const boxGap = 3;
+      const boxWidth = (contentWidth - boxGap * 3) / 4;
+      const boxHeight = 20;
+      const boxes = [
+        { label: "Ventas", value: formatCurrency(metrics.ventas_totales), color: NAVY },
+        { label: "Pedidos", value: String(metrics.pedidos), color: NAVY },
+        { label: "Ticket promedio", value: formatCurrency(metrics.ticket_promedio), color: NAVY },
+        { label: "Utilidad neta", value: formatCurrency(finanzas.utilidad), color: finanzas.utilidad >= 0 ? GREEN : RED },
+      ];
+      boxes.forEach((box, i) => {
+        const x = margin + i * (boxWidth + boxGap);
+        pdf.setFillColor(...GRAY_LIGHT);
+        pdf.roundedRect(x, y, boxWidth, boxHeight, 2, 2, "F");
+        pdf.setTextColor(...GRAY_TEXT);
+        pdf.setFontSize(7);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(box.label, x + 3, y + 6);
+        pdf.setTextColor(...box.color);
+        pdf.setFontSize(10.5);
+        pdf.setFont("helvetica", "bold");
+        const valueLines = pdf.splitTextToSize(box.value, boxWidth - 6);
+        pdf.text(valueLines[0], x + 3, y + 15);
+      });
+      y += boxHeight + 10;
+
+      // ── Helper: título de sección + párrafo con salto de línea automático ──
+      const addSection = (title: string, text: string) => {
+        checkPageBreak(20);
+        pdf.setTextColor(...NAVY);
+        pdf.setFontSize(12);
+        pdf.setFont("helvetica", "bold");
+        pdf.text(title, margin, y);
+        y += 2;
+        pdf.setDrawColor(...GRAY_BORDER);
+        pdf.setLineWidth(0.3);
+        pdf.line(margin, y, pageWidth - margin, y);
+        y += 6;
+        pdf.setTextColor(...GRAY_BODY);
+        pdf.setFontSize(9.5);
+        pdf.setFont("helvetica", "normal");
+        const lines = pdf.splitTextToSize(text, contentWidth);
+        checkPageBreak(lines.length * 4.5);
+        pdf.text(lines, margin, y);
+        y += lines.length * 4.5 + 8;
+      };
+
+      addSection("1. Ventas", analisisVentas());
+      addSection("2. Productos", analisisProductos());
+
+      // Tabla de productos top
+      if (topProductos.length > 0) {
+        checkPageBreak(10 + topProductos.length * 5.5);
+        pdf.setTextColor(...GRAY_TEXT);
+        pdf.setFontSize(7.5);
+        pdf.setFont("helvetica", "bold");
+        pdf.text("#", margin, y);
+        pdf.text("PRODUCTO", margin + 8, y);
+        pdf.text("UNIDADES", pageWidth - margin - 32, y);
+        pdf.text("TOTAL", pageWidth - margin, y, { align: "right" });
+        y += 2;
+        pdf.setDrawColor(...GRAY_BORDER);
+        pdf.line(margin, y, pageWidth - margin, y);
+        y += 5;
+
+        pdf.setFont("helvetica", "normal");
+        topProductos.forEach((p, i) => {
+          checkPageBreak(6);
+          pdf.setTextColor(...GRAY_TEXT);
+          pdf.setFontSize(9);
+          pdf.text(String(i + 1), margin, y);
+          pdf.setTextColor(...GRAY_DARK);
+          const nombre = p.nombre.length > 45 ? p.nombre.slice(0, 42) + "..." : p.nombre;
+          pdf.text(nombre, margin + 8, y);
+          pdf.setTextColor(...GRAY_BODY);
+          pdf.text(String(p.unidades), pageWidth - margin - 32, y);
+          pdf.setTextColor(...GRAY_DARK);
+          pdf.text(formatCurrency(p.total_vendido), pageWidth - margin, y, { align: "right" });
+          y += 5.5;
+        });
+        y += 6;
+      }
+
+      addSection("3. Inventario", analisisInventario());
+      addSection("4. Finanzas", analisisFinanzas());
+
+      // Recomendaciones
+      if (finanzas.tips && finanzas.tips.length > 0) {
+        checkPageBreak(15);
+        pdf.setTextColor(...AMBER_TEXT);
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "bold");
+        pdf.text("RECOMENDACIONES", margin, y);
+        y += 6;
+        pdf.setTextColor(...GRAY_BODY);
+        pdf.setFontSize(9);
+        pdf.setFont("helvetica", "normal");
+        finanzas.tips.forEach((tip: string) => {
+          const lines = pdf.splitTextToSize(`•  ${tip}`, contentWidth);
+          checkPageBreak(lines.length * 4.3);
+          pdf.text(lines, margin, y);
+          y += lines.length * 4.3 + 2;
+        });
+      }
+
+      // Pie de página en todas las hojas
+      const totalPages = pdf.getNumberOfPages();
+      for (let p = 1; p <= totalPages; p++) {
+        pdf.setPage(p);
+        pdf.setDrawColor(...GRAY_BORDER);
+        pdf.setLineWidth(0.3);
+        pdf.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12);
+        pdf.setTextColor(...GRAY_TEXT);
+        pdf.setFontSize(7.5);
+        pdf.setFont("helvetica", "normal");
+        pdf.text("Generado con ToolBox · toolbox.mx", margin, pageHeight - 7);
+        pdf.text(`Página ${p} de ${totalPages}`, pageWidth - margin, pageHeight - 7, { align: "right" });
       }
 
       const safeOrgName = orgName.replace(/[^a-zA-Z0-9]+/g, "-");
@@ -213,10 +368,6 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
       setGenerating(false);
     }
   };
-
-  const fechaGeneracion = new Date().toLocaleDateString("es-MX", {
-    day: "numeric", month: "long", year: "numeric",
-  });
 
   return (
     <div>
@@ -271,73 +422,69 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
           <Loader className="animate-spin text-[var(--brand-red)]" size={28} />
         </div>
       ) : metrics && finanzas ? (
-        /* ══════════ EL REPORTE (esto es lo que se convierte a PDF) ══════════ */
-        <div ref={reportRef} style={{ border: "1px solid #e5e7eb", backgroundColor: "#ffffff", color: "#1f2937" }} className="rounded-2xl p-10 max-w-3xl">
-
-          {/* Encabezado */}
-          <div style={{ borderBottom: "2px solid #1A2332" }} className="pb-6 mb-8">
+        /* ══════════ VISTA PREVIA en pantalla — el PDF real se construye aparte ══════════ */
+        <div className="rounded-2xl border border-border bg-background p-10 max-w-3xl">
+          <div className="border-b-2 border-[#1A2332] pb-6 mb-8">
             {logoUrl ? (
-              <img src={logoUrl} alt={orgName} crossOrigin="anonymous" className="h-14 mb-4 object-contain" />
+              <img src={logoUrl} alt={orgName} className="h-14 mb-4 object-contain" />
             ) : (
-              <p style={{ color: "#FF2D2D" }} className="text-xs font-semibold uppercase tracking-widest mb-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[var(--brand-red)] mb-2">
                 Reporte de negocio · ToolBox
               </p>
             )}
-            <h1 style={{ color: "#1A2332" }} className="text-3xl font-bold">{orgName}</h1>
-            <p style={{ color: "#6b7280" }} className="text-sm mt-2">
+            <h1 className="text-3xl font-bold text-[#1A2332]">{orgName}</h1>
+            <p className="text-sm text-muted-foreground mt-2">
               Periodo: {range.start} al {range.end} · Generado el {fechaGeneracion}
             </p>
           </div>
 
-          {/* Resumen ejecutivo */}
           <div className="grid grid-cols-4 gap-4 mb-8">
-            <div style={{ backgroundColor: "#f9fafb" }} className="rounded-xl p-4">
-              <p style={{ color: "#6b7280" }} className="text-xs mb-1">Ventas</p>
-              <p style={{ color: "#1A2332" }} className="text-lg font-bold">{formatCurrency(metrics.ventas_totales)}</p>
+            <div className="rounded-xl bg-muted/40 p-4">
+              <p className="text-xs text-muted-foreground mb-1">Ventas</p>
+              <p className="text-lg font-bold text-[#1A2332]">{formatCurrency(metrics.ventas_totales)}</p>
             </div>
-            <div style={{ backgroundColor: "#f9fafb" }} className="rounded-xl p-4">
-              <p style={{ color: "#6b7280" }} className="text-xs mb-1">Pedidos</p>
-              <p style={{ color: "#1A2332" }} className="text-lg font-bold">{metrics.pedidos}</p>
+            <div className="rounded-xl bg-muted/40 p-4">
+              <p className="text-xs text-muted-foreground mb-1">Pedidos</p>
+              <p className="text-lg font-bold text-[#1A2332]">{metrics.pedidos}</p>
             </div>
-            <div style={{ backgroundColor: "#f9fafb" }} className="rounded-xl p-4">
-              <p style={{ color: "#6b7280" }} className="text-xs mb-1">Ticket promedio</p>
-              <p style={{ color: "#1A2332" }} className="text-lg font-bold">{formatCurrency(metrics.ticket_promedio)}</p>
+            <div className="rounded-xl bg-muted/40 p-4">
+              <p className="text-xs text-muted-foreground mb-1">Ticket promedio</p>
+              <p className="text-lg font-bold text-[#1A2332]">{formatCurrency(metrics.ticket_promedio)}</p>
             </div>
-            <div style={{ backgroundColor: "#f9fafb" }} className="rounded-xl p-4">
-              <p style={{ color: "#6b7280" }} className="text-xs mb-1">Utilidad neta</p>
-              <p style={{ color: finanzas.utilidad >= 0 ? "#059669" : "#ef4444" }} className="text-lg font-bold">
+            <div className="rounded-xl bg-muted/40 p-4">
+              <p className="text-xs text-muted-foreground mb-1">Utilidad neta</p>
+              <p className={`text-lg font-bold ${finanzas.utilidad >= 0 ? "text-emerald-600" : "text-red-500"}`}>
                 {formatCurrency(finanzas.utilidad)}
               </p>
             </div>
           </div>
 
-          {/* Secciones de análisis */}
           <div className="space-y-7">
             <section>
-              <h2 style={{ color: "#1A2332", borderBottom: "1px solid #e5e7eb" }} className="text-base font-bold mb-2 pb-1">1. Ventas</h2>
-              <p style={{ color: "#374151" }} className="text-sm leading-relaxed">{analisisVentas()}</p>
+              <h2 className="text-base font-bold text-[#1A2332] mb-2 pb-1 border-b border-border">1. Ventas</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">{analisisVentas()}</p>
             </section>
 
             <section>
-              <h2 style={{ color: "#1A2332", borderBottom: "1px solid #e5e7eb" }} className="text-base font-bold mb-2 pb-1">2. Productos</h2>
-              <p style={{ color: "#374151" }} className="text-sm leading-relaxed mb-4">{analisisProductos()}</p>
+              <h2 className="text-base font-bold text-[#1A2332] mb-2 pb-1 border-b border-border">2. Productos</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed mb-4">{analisisProductos()}</p>
               {topProductos.length > 0 && (
                 <table className="w-full text-sm">
                   <thead>
-                    <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
-                      <th style={{ color: "#6b7280" }} className="text-left py-2 text-xs font-semibold uppercase">#</th>
-                      <th style={{ color: "#6b7280" }} className="text-left py-2 text-xs font-semibold uppercase">Producto</th>
-                      <th style={{ color: "#6b7280" }} className="text-right py-2 text-xs font-semibold uppercase">Unidades</th>
-                      <th style={{ color: "#6b7280" }} className="text-right py-2 text-xs font-semibold uppercase">Total</th>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2 text-xs font-semibold text-muted-foreground uppercase">#</th>
+                      <th className="text-left py-2 text-xs font-semibold text-muted-foreground uppercase">Producto</th>
+                      <th className="text-right py-2 text-xs font-semibold text-muted-foreground uppercase">Unidades</th>
+                      <th className="text-right py-2 text-xs font-semibold text-muted-foreground uppercase">Total</th>
                     </tr>
                   </thead>
                   <tbody>
                     {topProductos.map((p, i) => (
-                      <tr key={p.product_id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                        <td style={{ color: "#6b7280" }} className="py-2">{i + 1}</td>
-                        <td style={{ color: "#1f2937" }} className="py-2 font-medium">{p.nombre}</td>
-                        <td style={{ color: "#4b5563" }} className="py-2 text-right">{p.unidades}</td>
-                        <td style={{ color: "#1f2937" }} className="py-2 text-right font-medium">{formatCurrency(p.total_vendido)}</td>
+                      <tr key={p.product_id} className="border-b border-border/50">
+                        <td className="py-2 text-muted-foreground">{i + 1}</td>
+                        <td className="py-2 text-foreground font-medium">{p.nombre}</td>
+                        <td className="py-2 text-right text-muted-foreground">{p.unidades}</td>
+                        <td className="py-2 text-right text-foreground font-medium">{formatCurrency(p.total_vendido)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -346,19 +493,19 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
             </section>
 
             <section>
-              <h2 style={{ color: "#1A2332", borderBottom: "1px solid #e5e7eb" }} className="text-base font-bold mb-2 pb-1">3. Inventario</h2>
-              <p style={{ color: "#374151" }} className="text-sm leading-relaxed">{analisisInventario()}</p>
+              <h2 className="text-base font-bold text-[#1A2332] mb-2 pb-1 border-b border-border">3. Inventario</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">{analisisInventario()}</p>
             </section>
 
             <section>
-              <h2 style={{ color: "#1A2332", borderBottom: "1px solid #e5e7eb" }} className="text-base font-bold mb-2 pb-1">4. Finanzas</h2>
-              <p style={{ color: "#374151" }} className="text-sm leading-relaxed mb-4">{analisisFinanzas()}</p>
+              <h2 className="text-base font-bold text-[#1A2332] mb-2 pb-1 border-b border-border">4. Finanzas</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed mb-4">{analisisFinanzas()}</p>
               {finanzas.tips && finanzas.tips.length > 0 && (
-                <div style={{ backgroundColor: "#fffbeb", border: "1px solid #fef3c7" }} className="rounded-xl p-4">
-                  <p style={{ color: "#92400e" }} className="text-xs font-semibold uppercase mb-2">Recomendaciones</p>
+                <div className="rounded-xl bg-amber-50 border border-amber-100 p-4">
+                  <p className="text-xs font-semibold text-amber-800 uppercase mb-2">Recomendaciones</p>
                   <ul className="space-y-1.5">
                     {finanzas.tips.map((tip: string, i: number) => (
-                      <li key={i} style={{ color: "#374151" }} className="text-sm leading-relaxed">• {tip}</li>
+                      <li key={i} className="text-sm text-muted-foreground leading-relaxed">• {tip}</li>
                     ))}
                   </ul>
                 </div>
@@ -366,10 +513,9 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
             </section>
           </div>
 
-          {/* Pie */}
-          <div style={{ borderTop: "1px solid #e5e7eb" }} className="mt-10 pt-4 flex items-center justify-between">
-            <p style={{ color: "#9ca3af" }} className="text-xs">Generado con ToolBox · toolbox.mx</p>
-            <p style={{ color: "#9ca3af" }} className="text-xs">{fechaGeneracion}</p>
+          <div className="mt-10 pt-4 border-t border-border flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">Generado con ToolBox · toolbox.mx</p>
+            <p className="text-xs text-muted-foreground">{fechaGeneracion}</p>
           </div>
         </div>
       ) : null}

@@ -167,6 +167,21 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         scale: 2,
         backgroundColor: "#ffffff",
         useCORS: true,
+        onclone: (clonedDoc) => {
+          // Tailwind v4 le asigna un border-color por default a TODOS los
+          // elementos (aunque no tengan borde visible), y ese default usa
+          // oklch() — lo mismo que ya sabemos que html2canvas no puede leer.
+          // Aquí sobreescribimos ese default con hexadecimal en la copia
+          // que se va a capturar, sin tocar la página real.
+          const override = clonedDoc.createElement("style");
+          override.innerHTML = `
+            * {
+              border-color: #e5e7eb !important;
+              outline-color: #e5e7eb !important;
+            }
+          `;
+          clonedDoc.head.appendChild(override);
+        },
       });
       const imgData = canvas.toDataURL("image/png");
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
@@ -257,7 +272,7 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         </div>
       ) : metrics && finanzas ? (
         /* ══════════ EL REPORTE (esto es lo que se convierte a PDF) ══════════ */
-        <div ref={reportRef} style={{ border: "1px solid #e5e7eb", backgroundColor: "#ffffff" }} className="rounded-2xl p-10 max-w-3xl">
+        <div ref={reportRef} style={{ border: "1px solid #e5e7eb", backgroundColor: "#ffffff", color: "#1f2937" }} className="rounded-2xl p-10 max-w-3xl">
 
           {/* Encabezado */}
           <div style={{ borderBottom: "2px solid #1A2332" }} className="pb-6 mb-8">

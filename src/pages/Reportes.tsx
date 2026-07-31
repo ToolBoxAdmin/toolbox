@@ -202,31 +202,34 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         }
       };
 
-      // ── Encabezado: marca ToolBox a la izquierda, logo del cliente a la derecha ──
+      // ── Encabezado: logo real de ToolBox a la izquierda, logo del cliente a la derecha ──
       const headerTop = y;
-      pdf.setFontSize(13);
-      pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(...NAVY);
-      pdf.text("Tool", margin, headerTop);
-      const toolWidth = pdf.getTextWidth("Tool");
-      pdf.setTextColor(...BRAND_RED);
-      pdf.text("Box", margin + toolWidth, headerTop);
+      const logoBoxHeight = 12;
 
-      pdf.setTextColor(...GRAY_TEXT);
-      pdf.setFontSize(7.5);
-      pdf.setFont("helvetica", "normal");
-      pdf.text("REPORTE DE NEGOCIO", margin, headerTop + 5);
+      try {
+        const toolboxData = await urlToDataURL("/Logo Transparente.png");
+        const tbProps = pdf.getImageProperties(toolboxData);
+        const tbHeight = logoBoxHeight;
+        const tbWidth = (tbProps.width / tbProps.height) * tbHeight;
+        pdf.addImage(toolboxData, "PNG", margin, headerTop - 9, tbWidth, tbHeight);
+      } catch {
+        // Si por lo que sea no carga, no dejamos el encabezado vacío
+        pdf.setTextColor(...BRAND_RED);
+        pdf.setFontSize(11);
+        pdf.setFont("helvetica", "bold");
+        pdf.text("ToolBox", margin, headerTop);
+      }
 
       if (logoUrl) {
         try {
           const dataUrl = await urlToDataURL(logoUrl);
           const props = pdf.getImageProperties(dataUrl);
-          const logoHeight = 14;
-          const logoWidth = (props.width / props.height) * logoHeight;
-          pdf.addImage(dataUrl, "JPEG", pageWidth - margin - logoWidth, headerTop - 9, logoWidth, logoHeight);
-        } catch { /* si el logo falla, el encabezado sigue viéndose bien sin él */ }
+          const clientLogoHeight = logoBoxHeight;
+          const clientLogoWidth = (props.width / props.height) * clientLogoHeight;
+          pdf.addImage(dataUrl, "JPEG", pageWidth - margin - clientLogoWidth, headerTop - 9, clientLogoWidth, clientLogoHeight);
+        } catch { /* si el logo del cliente falla, el encabezado sigue viéndose bien sin él */ }
       }
-      y = headerTop + 14;
+      y = headerTop + 10;
 
       pdf.setTextColor(...NAVY);
       pdf.setFontSize(20);
@@ -459,14 +462,11 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
       ) : metrics && finanzas ? (
         /* ══════════ VISTA PREVIA en pantalla — el PDF real se construye aparte ══════════ */
         <div className="rounded-2xl border border-border bg-background p-10 max-w-3xl">
-          <div className="border-b-2 border-[#1A2332] pb-6 mb-8">
-            {logoUrl ? (
-              <img src={logoUrl} alt={orgName} className="h-14 mb-4 object-contain" />
-            ) : (
-              <p className="text-xs font-semibold uppercase tracking-widest text-[var(--brand-red)] mb-2">
-                Reporte de negocio · ToolBox
-              </p>
-            )}
+          <div className="border-b border-border pb-6 mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <img src="/Logo Transparente.png" alt="ToolBox" className="h-9 object-contain" />
+              {logoUrl && <img src={logoUrl} alt={orgName} className="h-9 object-contain" />}
+            </div>
             <h1 className="text-3xl font-bold text-[#1A2332]">{orgName}</h1>
             <p className="text-sm text-muted-foreground mt-2">
               Periodo: {range.start} al {range.end} · Generado el {fechaGeneracion}

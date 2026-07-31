@@ -202,20 +202,22 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         }
       };
 
-      // ── Encabezado: logo real de ToolBox a la izquierda, logo del cliente a la derecha ──
+      // ── Encabezado: logo de ToolBox pequeño y discreto, logo del cliente grande y protagonista ──
       const headerTop = y;
-      const logoBoxHeight = 12;
+      const toolboxLogoHeight = 7;
+      const clientLogoHeight = 16;
+      const rowTop = headerTop - 11;
 
       try {
         const toolboxData = await urlToDataURL("/Logo Transparente.png");
         const tbProps = pdf.getImageProperties(toolboxData);
-        const tbHeight = logoBoxHeight;
-        const tbWidth = (tbProps.width / tbProps.height) * tbHeight;
-        pdf.addImage(toolboxData, "PNG", margin, headerTop - 9, tbWidth, tbHeight);
+        const tbWidth = (tbProps.width / tbProps.height) * toolboxLogoHeight;
+        const tbY = rowTop + (clientLogoHeight - toolboxLogoHeight) / 2;
+        pdf.addImage(toolboxData, "PNG", margin, tbY, tbWidth, toolboxLogoHeight);
       } catch {
         // Si por lo que sea no carga, no dejamos el encabezado vacío
         pdf.setTextColor(...BRAND_RED);
-        pdf.setFontSize(11);
+        pdf.setFontSize(9);
         pdf.setFont("helvetica", "bold");
         pdf.text("ToolBox", margin, headerTop);
       }
@@ -224,12 +226,11 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         try {
           const dataUrl = await urlToDataURL(logoUrl);
           const props = pdf.getImageProperties(dataUrl);
-          const clientLogoHeight = logoBoxHeight;
           const clientLogoWidth = (props.width / props.height) * clientLogoHeight;
-          pdf.addImage(dataUrl, "JPEG", pageWidth - margin - clientLogoWidth, headerTop - 9, clientLogoWidth, clientLogoHeight);
+          pdf.addImage(dataUrl, "JPEG", pageWidth - margin - clientLogoWidth, rowTop, clientLogoWidth, clientLogoHeight);
         } catch { /* si el logo del cliente falla, el encabezado sigue viéndose bien sin él */ }
       }
-      y = headerTop + 10;
+      y = rowTop + clientLogoHeight + 4;
 
       pdf.setTextColor(...NAVY);
       pdf.setFontSize(20);
@@ -243,27 +244,25 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
       pdf.text(`Periodo: ${range.start} al ${range.end}  ·  Generado el ${fechaGeneracion}`, margin, y);
       y += 4;
 
-      pdf.setDrawColor(...BRAND_RED);
-      pdf.setLineWidth(1);
+      pdf.setDrawColor(...GRAY_BORDER);
+      pdf.setLineWidth(0.3);
       pdf.line(margin, y, pageWidth - margin, y);
       y += 10;
 
-      // ── Resumen ejecutivo (4 cuadros con acento de color arriba) ──
+      // ── Resumen ejecutivo (4 cuadros planos, sin franjas de color) ──
       const boxGap = 3;
       const boxWidth = (contentWidth - boxGap * 3) / 4;
       const boxHeight = 20;
       const boxes = [
-        { label: "Ventas", value: formatCurrency(metrics.ventas_totales), color: NAVY, accent: BRAND_RED },
-        { label: "Pedidos", value: String(metrics.pedidos), color: NAVY, accent: NAVY },
-        { label: "Ticket promedio", value: formatCurrency(metrics.ticket_promedio), color: NAVY, accent: NAVY },
-        { label: "Utilidad neta", value: formatCurrency(finanzas.utilidad), color: finanzas.utilidad >= 0 ? GREEN : RED, accent: finanzas.utilidad >= 0 ? GREEN : RED },
+        { label: "Ventas", value: formatCurrency(metrics.ventas_totales), color: NAVY },
+        { label: "Pedidos", value: String(metrics.pedidos), color: NAVY },
+        { label: "Ticket promedio", value: formatCurrency(metrics.ticket_promedio), color: NAVY },
+        { label: "Utilidad neta", value: formatCurrency(finanzas.utilidad), color: finanzas.utilidad >= 0 ? GREEN : RED },
       ];
       boxes.forEach((box, i) => {
         const x = margin + i * (boxWidth + boxGap);
         pdf.setFillColor(...GRAY_LIGHT);
         pdf.roundedRect(x, y, boxWidth, boxHeight, 2, 2, "F");
-        pdf.setFillColor(...box.accent);
-        pdf.rect(x, y, boxWidth, 1.2, "F");
         pdf.setTextColor(...GRAY_TEXT);
         pdf.setFontSize(7);
         pdf.setFont("helvetica", "normal");
@@ -464,8 +463,8 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         <div className="rounded-2xl border border-border bg-background p-10 max-w-3xl">
           <div className="border-b border-border pb-6 mb-8">
             <div className="flex items-center justify-between mb-4">
-              <img src="/Logo Transparente.png" alt="ToolBox" className="h-9 object-contain" />
-              {logoUrl && <img src={logoUrl} alt={orgName} className="h-9 object-contain" />}
+              <img src="/Logo Transparente.png" alt="ToolBox" className="h-5 object-contain" />
+              {logoUrl && <img src={logoUrl} alt={orgName} className="h-12 object-contain" />}
             </div>
             <h1 className="text-3xl font-bold text-[#1A2332]">{orgName}</h1>
             <p className="text-sm text-muted-foreground mt-2">

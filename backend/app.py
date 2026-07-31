@@ -184,7 +184,15 @@ def check_and_generate_recurring_expenses(org_id: int):
     """Genera automáticamente los gastos recurrentes del mes (plantillas o
     personalizados) una vez que su día ya pasó — nunca antes, nunca dos
     veces en el mismo mes. También agrega el cobro de ToolBox si el
-    negocio lo tiene activado."""
+    negocio lo tiene activado.
+
+    Esta función se llama desde varios endpoints que a veces se disparan
+    en paralelo (Finanzas pide /resumen y /gastos casi al mismo tiempo).
+    Para que nunca se duplique un gasto, "reclamar" el mes se hace con un
+    UPDATE condicionado: si dos llamadas llegan a la vez, solo una logra
+    actualizar la fila (0 filas afectadas para la otra), así que solo esa
+    una crea el gasto — sin importar qué tan rápido lleguen ambas.
+    """
     try:
         today = date.today()
         current_month = today.strftime('%Y-%m')
@@ -198,6 +206,16 @@ def check_and_generate_recurring_expenses(org_id: int):
                 continue
             if today.day < r['day_of_month']:
                 continue
+
+            claim = supabase.table('recurring_expenses') \
+                .update({'last_generated_month': current_month}) \
+                .eq('id', r['id']) \
+                .or_(f"last_generated_month.is.null,last_generated_month.neq.{current_month}") \
+                .execute()
+
+            if not claim.data:
+                continue  # otra llamada concurrente ya se quedó con el turno
+
             supabase.table('expenses').insert({
                 'org_id': org_id,
                 'category': r['category'],
@@ -205,26 +223,29 @@ def check_and_generate_recurring_expenses(org_id: int):
                 'amount': r['amount'],
                 'expense_date': today.isoformat(),
             }).execute()
-            supabase.table('recurring_expenses').update({
-                'last_generated_month': current_month
-            }).eq('id', r['id']).execute()
 
         # 2. Cobro de ToolBox (si está activado para esta org)
-        org_res = supabase.table('organizations').select('toolbox_charge_enabled').eq('id', org_id).execute()
+        org_res = supabase.table('organizations') \
+            .select('toolbox_charge_enabled, toolbox_charge_last_month').eq('id', org_id).execute()
+
         if org_res.data and org_res.data[0].get('toolbox_charge_enabled', True):
-            existing_charge = supabase.table('expenses').select('id') \
-                .eq('org_id', org_id).eq('category', 'ToolBox') \
-                .gte('expense_date', today.replace(day=1).isoformat()).execute()
-            if not existing_charge.data:
-                monto = _calcular_costo_toolbox(org_id)
-                if monto > 0:
-                    supabase.table('expenses').insert({
-                        'org_id': org_id,
-                        'category': 'ToolBox',
-                        'description': 'Suscripción mensual ToolBox (plan + herramientas activas)',
-                        'amount': monto,
-                        'expense_date': today.isoformat(),
-                    }).execute()
+            if org_res.data[0].get('toolbox_charge_last_month') != current_month:
+                claim = supabase.table('organizations') \
+                    .update({'toolbox_charge_last_month': current_month}) \
+                    .eq('id', org_id) \
+                    .or_(f"toolbox_charge_last_month.is.null,toolbox_charge_last_month.neq.{current_month}") \
+                    .execute()
+
+                if claim.data:
+                    monto = _calcular_costo_toolbox(org_id)
+                    if monto > 0:
+                        supabase.table('expenses').insert({
+                            'org_id': org_id,
+                            'category': 'ToolBox',
+                            'description': 'Suscripción mensual ToolBox (plan + herramientas activas)',
+                            'amount': monto,
+                            'expense_date': today.isoformat(),
+                        }).execute()
     except Exception as e:
         print(f"Error generando gastos recurrentes: {e}", file=sys.stderr, flush=True)
 

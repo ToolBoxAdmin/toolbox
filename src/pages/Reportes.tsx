@@ -191,7 +191,8 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
 
       const safeOrgName = orgName.replace(/[^a-zA-Z0-9]+/g, "-");
       pdf.save(`Reporte-${safeOrgName}-${range.start}-al-${range.end}.pdf`);
-    } catch {
+    } catch (e) {
+      console.error("Error generando PDF:", e);
       setError("No se pudo generar el PDF. Intenta de nuevo.");
     } finally {
       setGenerating(false);
@@ -256,40 +257,40 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         </div>
       ) : metrics && finanzas ? (
         /* ══════════ EL REPORTE (esto es lo que se convierte a PDF) ══════════ */
-        <div ref={reportRef} className="rounded-2xl border border-border bg-white p-10 max-w-3xl">
+        <div ref={reportRef} style={{ border: "1px solid #e5e7eb", backgroundColor: "#ffffff" }} className="rounded-2xl p-10 max-w-3xl">
 
           {/* Encabezado */}
-          <div className="border-b-2 border-[#1A2332] pb-6 mb-8">
+          <div style={{ borderBottom: "2px solid #1A2332" }} className="pb-6 mb-8">
             {logoUrl ? (
               <img src={logoUrl} alt={orgName} crossOrigin="anonymous" className="h-14 mb-4 object-contain" />
             ) : (
-              <p className="text-xs font-semibold uppercase tracking-widest text-[var(--brand-red)] mb-2">
+              <p style={{ color: "#FF2D2D" }} className="text-xs font-semibold uppercase tracking-widest mb-2">
                 Reporte de negocio · ToolBox
               </p>
             )}
-            <h1 className="text-3xl font-bold text-[#1A2332]">{orgName}</h1>
-            <p className="text-sm text-gray-500 mt-2">
+            <h1 style={{ color: "#1A2332" }} className="text-3xl font-bold">{orgName}</h1>
+            <p style={{ color: "#6b7280" }} className="text-sm mt-2">
               Periodo: {range.start} al {range.end} · Generado el {fechaGeneracion}
             </p>
           </div>
 
           {/* Resumen ejecutivo */}
           <div className="grid grid-cols-4 gap-4 mb-8">
-            <div className="rounded-xl bg-gray-50 p-4">
-              <p className="text-xs text-gray-500 mb-1">Ventas</p>
-              <p className="text-lg font-bold text-[#1A2332]">{formatCurrency(metrics.ventas_totales)}</p>
+            <div style={{ backgroundColor: "#f9fafb" }} className="rounded-xl p-4">
+              <p style={{ color: "#6b7280" }} className="text-xs mb-1">Ventas</p>
+              <p style={{ color: "#1A2332" }} className="text-lg font-bold">{formatCurrency(metrics.ventas_totales)}</p>
             </div>
-            <div className="rounded-xl bg-gray-50 p-4">
-              <p className="text-xs text-gray-500 mb-1">Pedidos</p>
-              <p className="text-lg font-bold text-[#1A2332]">{metrics.pedidos}</p>
+            <div style={{ backgroundColor: "#f9fafb" }} className="rounded-xl p-4">
+              <p style={{ color: "#6b7280" }} className="text-xs mb-1">Pedidos</p>
+              <p style={{ color: "#1A2332" }} className="text-lg font-bold">{metrics.pedidos}</p>
             </div>
-            <div className="rounded-xl bg-gray-50 p-4">
-              <p className="text-xs text-gray-500 mb-1">Ticket promedio</p>
-              <p className="text-lg font-bold text-[#1A2332]">{formatCurrency(metrics.ticket_promedio)}</p>
+            <div style={{ backgroundColor: "#f9fafb" }} className="rounded-xl p-4">
+              <p style={{ color: "#6b7280" }} className="text-xs mb-1">Ticket promedio</p>
+              <p style={{ color: "#1A2332" }} className="text-lg font-bold">{formatCurrency(metrics.ticket_promedio)}</p>
             </div>
-            <div className="rounded-xl bg-gray-50 p-4">
-              <p className="text-xs text-gray-500 mb-1">Utilidad neta</p>
-              <p className={`text-lg font-bold ${finanzas.utilidad >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+            <div style={{ backgroundColor: "#f9fafb" }} className="rounded-xl p-4">
+              <p style={{ color: "#6b7280" }} className="text-xs mb-1">Utilidad neta</p>
+              <p style={{ color: finanzas.utilidad >= 0 ? "#059669" : "#ef4444" }} className="text-lg font-bold">
                 {formatCurrency(finanzas.utilidad)}
               </p>
             </div>
@@ -298,30 +299,30 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
           {/* Secciones de análisis */}
           <div className="space-y-7">
             <section>
-              <h2 className="text-base font-bold text-[#1A2332] mb-2 pb-1 border-b border-gray-200">1. Ventas</h2>
-              <p className="text-sm text-gray-700 leading-relaxed">{analisisVentas()}</p>
+              <h2 style={{ color: "#1A2332", borderBottom: "1px solid #e5e7eb" }} className="text-base font-bold mb-2 pb-1">1. Ventas</h2>
+              <p style={{ color: "#374151" }} className="text-sm leading-relaxed">{analisisVentas()}</p>
             </section>
 
             <section>
-              <h2 className="text-base font-bold text-[#1A2332] mb-2 pb-1 border-b border-gray-200">2. Productos</h2>
-              <p className="text-sm text-gray-700 leading-relaxed mb-4">{analisisProductos()}</p>
+              <h2 style={{ color: "#1A2332", borderBottom: "1px solid #e5e7eb" }} className="text-base font-bold mb-2 pb-1">2. Productos</h2>
+              <p style={{ color: "#374151" }} className="text-sm leading-relaxed mb-4">{analisisProductos()}</p>
               {topProductos.length > 0 && (
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-2 text-xs font-semibold text-gray-500 uppercase">#</th>
-                      <th className="text-left py-2 text-xs font-semibold text-gray-500 uppercase">Producto</th>
-                      <th className="text-right py-2 text-xs font-semibold text-gray-500 uppercase">Unidades</th>
-                      <th className="text-right py-2 text-xs font-semibold text-gray-500 uppercase">Total</th>
+                    <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                      <th style={{ color: "#6b7280" }} className="text-left py-2 text-xs font-semibold uppercase">#</th>
+                      <th style={{ color: "#6b7280" }} className="text-left py-2 text-xs font-semibold uppercase">Producto</th>
+                      <th style={{ color: "#6b7280" }} className="text-right py-2 text-xs font-semibold uppercase">Unidades</th>
+                      <th style={{ color: "#6b7280" }} className="text-right py-2 text-xs font-semibold uppercase">Total</th>
                     </tr>
                   </thead>
                   <tbody>
                     {topProductos.map((p, i) => (
-                      <tr key={p.product_id} className="border-b border-gray-100">
-                        <td className="py-2 text-gray-500">{i + 1}</td>
-                        <td className="py-2 text-gray-800 font-medium">{p.nombre}</td>
-                        <td className="py-2 text-right text-gray-600">{p.unidades}</td>
-                        <td className="py-2 text-right text-gray-800 font-medium">{formatCurrency(p.total_vendido)}</td>
+                      <tr key={p.product_id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                        <td style={{ color: "#6b7280" }} className="py-2">{i + 1}</td>
+                        <td style={{ color: "#1f2937" }} className="py-2 font-medium">{p.nombre}</td>
+                        <td style={{ color: "#4b5563" }} className="py-2 text-right">{p.unidades}</td>
+                        <td style={{ color: "#1f2937" }} className="py-2 text-right font-medium">{formatCurrency(p.total_vendido)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -330,19 +331,19 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
             </section>
 
             <section>
-              <h2 className="text-base font-bold text-[#1A2332] mb-2 pb-1 border-b border-gray-200">3. Inventario</h2>
-              <p className="text-sm text-gray-700 leading-relaxed">{analisisInventario()}</p>
+              <h2 style={{ color: "#1A2332", borderBottom: "1px solid #e5e7eb" }} className="text-base font-bold mb-2 pb-1">3. Inventario</h2>
+              <p style={{ color: "#374151" }} className="text-sm leading-relaxed">{analisisInventario()}</p>
             </section>
 
             <section>
-              <h2 className="text-base font-bold text-[#1A2332] mb-2 pb-1 border-b border-gray-200">4. Finanzas</h2>
-              <p className="text-sm text-gray-700 leading-relaxed mb-4">{analisisFinanzas()}</p>
+              <h2 style={{ color: "#1A2332", borderBottom: "1px solid #e5e7eb" }} className="text-base font-bold mb-2 pb-1">4. Finanzas</h2>
+              <p style={{ color: "#374151" }} className="text-sm leading-relaxed mb-4">{analisisFinanzas()}</p>
               {finanzas.tips && finanzas.tips.length > 0 && (
-                <div className="rounded-xl bg-amber-50 border border-amber-100 p-4">
-                  <p className="text-xs font-semibold text-amber-800 uppercase mb-2">Recomendaciones</p>
+                <div style={{ backgroundColor: "#fffbeb", border: "1px solid #fef3c7" }} className="rounded-xl p-4">
+                  <p style={{ color: "#92400e" }} className="text-xs font-semibold uppercase mb-2">Recomendaciones</p>
                   <ul className="space-y-1.5">
                     {finanzas.tips.map((tip: string, i: number) => (
-                      <li key={i} className="text-sm text-gray-700 leading-relaxed">• {tip}</li>
+                      <li key={i} style={{ color: "#374151" }} className="text-sm leading-relaxed">• {tip}</li>
                     ))}
                   </ul>
                 </div>
@@ -351,9 +352,9 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
           </div>
 
           {/* Pie */}
-          <div className="mt-10 pt-4 border-t border-gray-200 flex items-center justify-between">
-            <p className="text-xs text-gray-400">Generado con ToolBox · toolbox.mx</p>
-            <p className="text-xs text-gray-400">{fechaGeneracion}</p>
+          <div style={{ borderTop: "1px solid #e5e7eb" }} className="mt-10 pt-4 flex items-center justify-between">
+            <p style={{ color: "#9ca3af" }} className="text-xs">Generado con ToolBox · toolbox.mx</p>
+            <p style={{ color: "#9ca3af" }} className="text-xs">{fechaGeneracion}</p>
           </div>
         </div>
       ) : null}

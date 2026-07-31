@@ -3,6 +3,7 @@ import {
   X, ChevronDown, KeyRound, UserPlus, Pencil, TrendingUp,
   Building2, CreditCard, Users, Loader, Check, Settings, Clock,
   Mail, Phone, MapPin, ImageIcon, Upload, Gift, Copy, Power,
+  Activity, GraduationCap, FileText, ExternalLink,
 } from "lucide-react";
 import AgregarHerramienta from "./AgregarHerramienta";
 
@@ -139,6 +140,12 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
   // Referir a un amigo
   const [copied, setCopied] = useState(false);
 
+  // Semáforo de salud del negocio
+  const [semaforo, setSemaforo] = useState<{ status: string; score: number; max_score: number; factors: { name: string; points: number; reason: string }[] } | null>(null);
+
+  // Aprende más — documentos de la plataforma
+  const [documentos, setDocumentos] = useState<{ id: number; title: string; file_url: string; category: string }[]>([]);
+
   // Cambiar mi contraseña
   const [pwForm, setPwForm] = useState({ current: "", nueva: "", confirmar: "" });
   const [pwSubmitting, setPwSubmitting] = useState(false);
@@ -216,7 +223,25 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
     } catch { /* silencioso */ }
   };
 
-  useEffect(() => { fetchPerfil(); fetchGestion(); }, [orgId]);
+  const fetchSemaforo = async () => {
+    if (role !== "owner") return;
+    try {
+      const res = await fetch(`https://toolbox-backend-rkit.onrender.com/api/negocio/semaforo?org_id=${orgId}`, { headers });
+      if (res.ok) setSemaforo(await res.json());
+    } catch { /* silencioso */ }
+  };
+
+  const fetchDocumentos = async () => {
+    try {
+      const res = await fetch("https://toolbox-backend-rkit.onrender.com/api/documentos", { headers });
+      if (res.ok) {
+        const d = await res.json();
+        setDocumentos(d.documentos ?? []);
+      }
+    } catch { /* silencioso */ }
+  };
+
+  useEffect(() => { fetchPerfil(); fetchGestion(); fetchSemaforo(); fetchDocumentos(); }, [orgId]);
 
   const saveCadence = async () => {
     setCadenceSubmitting(true);
@@ -435,6 +460,38 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
                 )}
               </div>
               <div className="absolute -right-8 -bottom-8 w-40 h-40 rounded-full bg-white/10" />
+            </div>
+          )}
+
+          {/* Semáforo de salud del negocio */}
+          {isOwner && semaforo && (
+            <div className="rounded-2xl border border-border bg-background p-6 mb-8">
+              <div className="flex items-center gap-2 mb-4">
+                <Activity size={15} className="text-muted-foreground" />
+                <h3 className="text-sm font-semibold text-foreground">Estado de tu negocio</h3>
+              </div>
+              <div className="flex items-center gap-3 mb-5">
+                <div className={`w-4 h-4 rounded-full shrink-0 ${
+                  semaforo.status === "sano" ? "bg-emerald-500" : semaforo.status === "atencion" ? "bg-amber-500" : "bg-red-500"
+                }`} />
+                <p className="text-lg font-bold text-foreground">
+                  {semaforo.status === "sano" ? "Sano" : semaforo.status === "atencion" ? "Requiere atención" : "Enfermo"}
+                </p>
+                <span className="text-xs text-muted-foreground ml-auto">{semaforo.score} de {semaforo.max_score} puntos</span>
+              </div>
+              <div className="space-y-2.5">
+                {semaforo.factors.map((f, i) => (
+                  <div key={i} className="flex items-start gap-2.5">
+                    <div className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${
+                      f.points === 2 ? "bg-emerald-500" : f.points === 1 ? "bg-amber-500" : "bg-red-500"
+                    }`} />
+                    <div>
+                      <p className="text-xs font-medium text-foreground">{f.name}</p>
+                      <p className="text-xs text-muted-foreground">{f.reason}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -686,6 +743,35 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
               </div>
             </div>
           )}
+
+          {/* Aprende más — documentos de la plataforma */}
+          <div className="rounded-2xl border border-border bg-background p-6 mb-8">
+            <div className="flex items-center gap-2 mb-4">
+              <GraduationCap size={15} className="text-muted-foreground" />
+              <h3 className="text-sm font-semibold text-foreground">Aprende más</h3>
+            </div>
+            {documentos.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Aún no hay documentos disponibles. Aquí verás tu contrato, políticas y otros recursos cuando estén listos.
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {documentos.map((doc) => (
+                  <a key={doc.id} href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center justify-between px-3 py-2.5 rounded-lg hover:bg-muted transition-colors group">
+                    <div className="flex items-center gap-2.5">
+                      <FileText size={14} className="text-muted-foreground shrink-0" />
+                      <div>
+                        <p className="text-sm text-foreground">{doc.title}</p>
+                        <p className="text-xs text-muted-foreground">{doc.category}</p>
+                      </div>
+                    </div>
+                    <ExternalLink size={13} className="text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Cambiar mi contraseña */}
           <div className="rounded-2xl border border-border bg-background p-6">

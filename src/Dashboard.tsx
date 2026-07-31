@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { LogOut, Loader, Plus, Trash2, KeyRound, X, Building2, User, Pencil, Power, Mail, Phone, MapPin } from "lucide-react";
+import { LogOut, Loader, Plus, Trash2, KeyRound, X, Building2, User, Pencil, Power, Mail, Phone, MapPin, FileText, Upload } from "lucide-react";
 
 const API = "https://toolbox-backend-rkit.onrender.com";
 
@@ -24,6 +24,11 @@ export default function Dashboard() {
   });
   const [editOrgSubmitting, setEditOrgSubmitting] = useState(false);
   const [editOrgError, setEditOrgError] = useState("");
+  const [documentos, setDocumentos] = useState<any[]>([]);
+  const [docForm, setDocForm] = useState({ title: "", category: "Contrato" });
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docSubmitting, setDocSubmitting] = useState(false);
+  const [docError, setDocError] = useState("");
 
   // Forms
   const [orgForm, setOrgForm] = useState({ name: "", plan: "basic" });
@@ -45,9 +50,10 @@ export default function Dashboard() {
 
   const fetchData = async () => {
     try {
-      const [dashRes, usersRes] = await Promise.all([
+      const [dashRes, usersRes, docsRes] = await Promise.all([
         fetch(`${API}/api/dashboard-admin`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/api/users`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/api/documentos`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
 
       if (!dashRes.ok) { localStorage.clear(); navigate("/login"); return; }
@@ -58,6 +64,11 @@ export default function Dashboard() {
       if (usersRes.ok) {
         const usersData = await usersRes.json();
         setUsers(usersData.users);
+      }
+
+      if (docsRes.ok) {
+        const docsData = await docsRes.json();
+        setDocumentos(docsData.documentos ?? []);
       }
     } catch (err) {
       setError("Error al cargar datos");
@@ -184,6 +195,49 @@ export default function Dashboard() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ org_id: org.id, toolbox_charge_enabled: next }),
       });
+    } catch { fetchData(); }
+  };
+
+  const uploadDocumento = async () => {
+    if (!docForm.title || !docFile) { setDocError("Título y archivo son obligatorios."); return; }
+    setDocSubmitting(true);
+    setDocError("");
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(docFile);
+      });
+      const res = await fetch(`${API}/api/documentos/subir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: docForm.title,
+          category: docForm.category,
+          file_data: base64,
+          content_type: docFile.type || "application/pdf",
+          filename: docFile.name,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || "Error al subir el documento");
+      }
+      setDocForm({ title: "", category: "Contrato" });
+      setDocFile(null);
+      fetchData();
+    } catch (e: any) {
+      setDocError(e.message);
+    } finally {
+      setDocSubmitting(false);
+    }
+  };
+
+  const deleteDocumento = async (id: number) => {
+    setDocumentos((prev) => prev.filter((d) => d.id !== id));
+    try {
+      await fetch(`${API}/api/documentos/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
     } catch { fetchData(); }
   };
 
@@ -347,6 +401,63 @@ export default function Dashboard() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* Documentos (Learn More) */}
+        <div className="rounded-2xl border border-border bg-background overflow-hidden mt-8">
+          <div className="px-6 py-4 border-b border-border">
+            <h2 className="text-lg font-semibold text-foreground">Documentos</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">Contrato, políticas y recursos que ven todos tus clientes en Mi Perfil</p>
+          </div>
+
+          <div className="px-6 py-4 border-b border-border grid gap-3 sm:grid-cols-[1fr_180px_auto_auto]">
+            <input type="text" placeholder="Título del documento" value={docForm.title}
+              onChange={(e) => setDocForm((f) => ({ ...f, title: e.target.value }))}
+              className="input-field" />
+            <select value={docForm.category} onChange={(e) => setDocForm((f) => ({ ...f, category: e.target.value }))}
+              className="input-field">
+              <option>Contrato</option>
+              <option>Políticas</option>
+              <option>Responsabilidades</option>
+              <option>Otro</option>
+            </select>
+            <label className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors cursor-pointer">
+              <Upload size={15} />
+              {docFile ? docFile.name.slice(0, 18) : "Elegir archivo"}
+              <input type="file" className="hidden" onChange={(e) => setDocFile(e.target.files?.[0] ?? null)} />
+            </label>
+            <button onClick={uploadDocumento} disabled={docSubmitting}
+              className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand-red)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity disabled:opacity-50">
+              {docSubmitting ? "Subiendo..." : "Subir"}
+            </button>
+          </div>
+          {docError && <p className="px-6 pt-3 text-sm text-[var(--brand-red)]">{docError}</p>}
+
+          {documentos.length === 0 ? (
+            <p className="px-6 py-8 text-sm text-muted-foreground text-center">Aún no has subido ningún documento.</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {documentos.map((doc: any) => (
+                <div key={doc.id} className="flex items-center justify-between px-6 py-3">
+                  <div className="flex items-center gap-3">
+                    <FileText size={15} className="text-muted-foreground" />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{doc.title}</p>
+                      <p className="text-xs text-muted-foreground">{doc.category}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                      className="text-xs font-medium text-[var(--brand-red)] hover:underline">Ver</a>
+                    <button onClick={() => deleteDocumento(doc.id)}
+                      className="text-muted-foreground hover:text-red-500 transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 

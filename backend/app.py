@@ -2175,6 +2175,194 @@ def subir_logo_organizacion():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ============================================================================
+# NUEVO — SEMÁFORO DE SALUD DEL NEGOCIO
+# ============================================================================
+
+@app.route('/api/negocio/semaforo', methods=['GET'])
+def semaforo_negocio():
+    """Cruza margen, tendencia de ventas, inventario y pedidos para dar un
+    puntaje simple de salud del negocio, con el motivo de cada factor
+    para que el dueño entienda el porqué (no es una caja negra)."""
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        org_id = int(request.args.get('org_id'))
+        today = date.today()
+        d30 = (today - timedelta(days=30)).isoformat()
+
+        factors = []
+
+        # 1. Margen (últimos 30 días)
+        sales30 = supabase.table('sales').select('id, total_amount') \
+            .eq('org_id', org_id).eq('status', 'completada').gte('sale_date', d30).execute()
+        ingresos = sum(s['total_amount'] for s in sales30.data)
+
+        costo_mercancia = 0
+        if sales30.data:
+            sale_ids = [s['id'] for s in sales30.data]
+            items = supabase.table('sale_items').select('product_id, quantity').in_('sale_id', sale_ids).execute()
+            if items.data:
+                pids = list(set(i['product_id'] for i in items.data))
+                prods = supabase.table('products').select('id, unit_cost').in_('id', pids).execute()
+                cost_map = {p['id']: (p['unit_cost'] or 0) for p in prods.data}
+                costo_mercancia = sum(cost_map.get(i['product_id'], 0) * i['quantity'] for i in items.data)
+
+        gastos30 = supabase.table('expenses').select('amount').eq('org_id', org_id).gte('expense_date', d30).execute()
+        gastos_operativos = sum(e['amount'] for e in gastos30.data)
+        utilidad = ingresos - costo_mercancia - gastos_operativos
+        margen = (utilidad / ingresos * 100) if ingresos > 0 else None
+
+        if margen is None:
+            factors.append({'name': 'Margen', 'points': 1, 'reason': 'Sin ventas suficientes en los últimos 30 días para calcular margen.'})
+        elif margen >= 20:
+            factors.append({'name': 'Margen', 'points': 2, 'reason': f'Margen de {round(margen, 1)}%, saludable para retail.'})
+        elif margen >= 5:
+            factors.append({'name': 'Margen', 'points': 1, 'reason': f'Margen de {round(margen, 1)}%, por debajo del ideal (20%).'})
+        else:
+            factors.append({'name': 'Margen', 'points': 0, 'reason': f'Margen de {round(margen, 1)}%, revisa costos o precios pronto.'})
+
+        # 2. Tendencia de ventas: este mes vs mes anterior
+        first_this = today.replace(day=1)
+        last_month_end = first_this - timedelta(days=1)
+        first_last = last_month_end.replace(day=1)
+
+        all_sales = supabase.table('sales').select('sale_date, total_amount') \
+            .eq('org_id', org_id).eq('status', 'completada').gte('sale_date', first_last.isoformat()).execute()
+        this_month = sum(s['total_amount'] for s in all_sales.data if s['sale_date'] >= first_this.isoformat())
+        last_month = sum(s['total_amount'] for s in all_sales.data if first_last.isoformat() <= s['sale_date'] <= last_month_end.isoformat())
+        growth_pct = round(((this_month - last_month) / last_month * 100), 1) if last_month > 0 else None
+
+        if growth_pct is None:
+            factors.append({'name': 'Tendencia de ventas', 'points': 1, 'reason': 'Aún no hay suficiente historial para comparar meses.'})
+        elif growth_pct >= 0:
+            factors.append({'name': 'Tendencia de ventas', 'points': 2, 'reason': f'Ventas subieron {growth_pct}% este mes vs el anterior.'})
+        elif growth_pct >= -15:
+            factors.append({'name': 'Tendencia de ventas', 'points': 1, 'reason': f'Ventas bajaron {abs(growth_pct)}% este mes vs el anterior.'})
+        else:
+            factors.append({'name': 'Tendencia de ventas', 'points': 0, 'reason': f'Ventas cayeron {abs(growth_pct)}% este mes vs el anterior.'})
+
+        # 3. Inventario
+        prods = supabase.table('products').select('stock_current, stock_min').eq('org_id', org_id).eq('active', True).execute()
+        agotados = sum(1 for p in prods.data if p['stock_current'] == 0)
+
+        if agotados == 0:
+            factors.append({'name': 'Inventario', 'points': 2, 'reason': 'Sin productos agotados.'})
+        elif agotados <= 2:
+            factors.append({'name': 'Inventario', 'points': 1, 'reason': f'{agotados} producto(s) agotado(s).'})
+        else:
+            factors.append({'name': 'Inventario', 'points': 0, 'reason': f'{agotados} productos agotados — ventas perdidas cada día.'})
+
+        # 4. Pedidos atorados o devueltos
+        UMBRAL_ATORO = {'preparando': 3, 'enviado': 2, 'en_transito': 5}
+        orders_activos = supabase.table('orders').select('status, status_changed_at') \
+            .eq('org_id', org_id).in_('status', list(UMBRAL_ATORO.keys())).execute()
+        atorados = 0
+        for o in orders_activos.data:
+            if not o.get('status_changed_at'):
+                continue
+            changed = datetime.strptime(o['status_changed_at'][:10], '%Y-%m-%d').date()
+            if (today - changed).days >= UMBRAL_ATORO.get(o['status'], 999):
+                atorados += 1
+
+        devueltos = supabase.table('orders').select('id') \
+            .eq('org_id', org_id).eq('status', 'devuelto').gte('status_changed_at', d30).execute()
+        total_issues = atorados + len(devueltos.data)
+
+        if total_issues == 0:
+            factors.append({'name': 'Pedidos', 'points': 2, 'reason': 'Sin pedidos atorados ni devueltos recientes.'})
+        elif total_issues <= 2:
+            factors.append({'name': 'Pedidos', 'points': 1, 'reason': f'{total_issues} pedido(s) necesitan atención.'})
+        else:
+            factors.append({'name': 'Pedidos', 'points': 0, 'reason': f'{total_issues} pedidos atorados o devueltos — revisa Pedidos.'})
+
+        score = sum(f['points'] for f in factors)
+        if score >= 7:
+            status = 'sano'
+        elif score >= 4:
+            status = 'atencion'
+        else:
+            status = 'enfermo'
+
+        return jsonify({'status': status, 'score': score, 'max_score': 8, 'factors': factors}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# ============================================================================
+# NUEVO — DOCUMENTOS DE LA PLATAFORMA (Learn More)
+# ============================================================================
+
+@app.route('/api/documentos', methods=['GET'])
+def get_documentos():
+    try:
+        payload = get_token_payload()
+        if not payload:
+            return jsonify({'error': 'Token inválido'}), 401
+
+        res = supabase.table('platform_documents').select('*').order('uploaded_at', desc=True).execute()
+        return jsonify({'documentos': res.data}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/documentos/subir', methods=['POST'])
+def subir_documento():
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] != 'admin':
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        title = data.get('title')
+        category = data.get('category', 'General')
+        file_data = data.get('file_data')
+        content_type = data.get('content_type', 'application/pdf')
+        filename = data.get('filename', 'documento')
+
+        if not title or not file_data:
+            return jsonify({'error': 'Título y archivo son obligatorios'}), 400
+
+        file_bytes = base64.b64decode(file_data)
+        if len(file_bytes) > 10 * 1024 * 1024:
+            return jsonify({'error': 'El archivo no puede superar 10MB'}), 400
+
+        ext = filename.split('.')[-1] if '.' in filename else 'pdf'
+        safe_name = f"{uuid.uuid4().hex[:10]}.{ext}"
+
+        supabase.storage.from_('platform-docs').upload(
+            safe_name, file_bytes, {'content-type': content_type, 'upsert': 'true'}
+        )
+        public_url = supabase.storage.from_('platform-docs').get_public_url(safe_name)
+
+        res = supabase.table('platform_documents').insert({
+            'title': title,
+            'file_url': public_url,
+            'category': category,
+        }).execute()
+
+        return jsonify({'documento': res.data[0]}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/documentos/<int:doc_id>', methods=['DELETE'])
+def eliminar_documento(doc_id):
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] != 'admin':
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        supabase.table('platform_documents').delete().eq('id', doc_id).execute()
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/perfil/change-password', methods=['POST'])
 def change_own_password():

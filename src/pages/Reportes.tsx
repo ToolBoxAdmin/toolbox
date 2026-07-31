@@ -202,26 +202,31 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         }
       };
 
-      // ── Encabezado ──
-      let logoDrawn = false;
+      // ── Encabezado: marca ToolBox a la izquierda, logo del cliente a la derecha ──
+      const headerTop = y;
+      pdf.setFontSize(13);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(...NAVY);
+      pdf.text("Tool", margin, headerTop);
+      const toolWidth = pdf.getTextWidth("Tool");
+      pdf.setTextColor(...BRAND_RED);
+      pdf.text("Box", margin + toolWidth, headerTop);
+
+      pdf.setTextColor(...GRAY_TEXT);
+      pdf.setFontSize(7.5);
+      pdf.setFont("helvetica", "normal");
+      pdf.text("REPORTE DE NEGOCIO", margin, headerTop + 5);
+
       if (logoUrl) {
         try {
           const dataUrl = await urlToDataURL(logoUrl);
           const props = pdf.getImageProperties(dataUrl);
           const logoHeight = 14;
           const logoWidth = (props.width / props.height) * logoHeight;
-          pdf.addImage(dataUrl, "JPEG", margin, y, logoWidth, logoHeight);
-          y += logoHeight + 4;
-          logoDrawn = true;
-        } catch { /* si el logo falla, seguimos con el encabezado de texto */ }
+          pdf.addImage(dataUrl, "JPEG", pageWidth - margin - logoWidth, headerTop - 9, logoWidth, logoHeight);
+        } catch { /* si el logo falla, el encabezado sigue viéndose bien sin él */ }
       }
-      if (!logoDrawn) {
-        pdf.setTextColor(...BRAND_RED);
-        pdf.setFontSize(9);
-        pdf.setFont("helvetica", "bold");
-        pdf.text("REPORTE DE NEGOCIO · TOOLBOX", margin, y);
-        y += 7;
-      }
+      y = headerTop + 14;
 
       pdf.setTextColor(...NAVY);
       pdf.setFontSize(20);
@@ -235,45 +240,54 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
       pdf.text(`Periodo: ${range.start} al ${range.end}  ·  Generado el ${fechaGeneracion}`, margin, y);
       y += 4;
 
-      pdf.setDrawColor(...NAVY);
-      pdf.setLineWidth(0.6);
+      pdf.setDrawColor(...BRAND_RED);
+      pdf.setLineWidth(1);
       pdf.line(margin, y, pageWidth - margin, y);
       y += 10;
 
-      // ── Resumen ejecutivo (4 cuadros) ──
+      // ── Resumen ejecutivo (4 cuadros con acento de color arriba) ──
       const boxGap = 3;
       const boxWidth = (contentWidth - boxGap * 3) / 4;
       const boxHeight = 20;
       const boxes = [
-        { label: "Ventas", value: formatCurrency(metrics.ventas_totales), color: NAVY },
-        { label: "Pedidos", value: String(metrics.pedidos), color: NAVY },
-        { label: "Ticket promedio", value: formatCurrency(metrics.ticket_promedio), color: NAVY },
-        { label: "Utilidad neta", value: formatCurrency(finanzas.utilidad), color: finanzas.utilidad >= 0 ? GREEN : RED },
+        { label: "Ventas", value: formatCurrency(metrics.ventas_totales), color: NAVY, accent: BRAND_RED },
+        { label: "Pedidos", value: String(metrics.pedidos), color: NAVY, accent: NAVY },
+        { label: "Ticket promedio", value: formatCurrency(metrics.ticket_promedio), color: NAVY, accent: NAVY },
+        { label: "Utilidad neta", value: formatCurrency(finanzas.utilidad), color: finanzas.utilidad >= 0 ? GREEN : RED, accent: finanzas.utilidad >= 0 ? GREEN : RED },
       ];
       boxes.forEach((box, i) => {
         const x = margin + i * (boxWidth + boxGap);
         pdf.setFillColor(...GRAY_LIGHT);
         pdf.roundedRect(x, y, boxWidth, boxHeight, 2, 2, "F");
+        pdf.setFillColor(...box.accent);
+        pdf.rect(x, y, boxWidth, 1.2, "F");
         pdf.setTextColor(...GRAY_TEXT);
         pdf.setFontSize(7);
         pdf.setFont("helvetica", "normal");
-        pdf.text(box.label, x + 3, y + 6);
+        pdf.text(box.label, x + 3, y + 7);
         pdf.setTextColor(...box.color);
         pdf.setFontSize(10.5);
         pdf.setFont("helvetica", "bold");
         const valueLines = pdf.splitTextToSize(box.value, boxWidth - 6);
-        pdf.text(valueLines[0], x + 3, y + 15);
+        pdf.text(valueLines[0], x + 3, y + 16);
       });
       y += boxHeight + 10;
 
-      // ── Helper: título de sección + párrafo con salto de línea automático ──
-      const addSection = (title: string, text: string) => {
-        checkPageBreak(20);
+      // ── Helper: número con círculo de color + título + párrafo ──
+      const addSection = (num: number, title: string, text: string) => {
+        checkPageBreak(22);
+        pdf.setFillColor(...BRAND_RED);
+        pdf.circle(margin + 2.5, y - 1.5, 3, "F");
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "bold");
+        pdf.text(String(num), margin + 2.5, y - 0.2, { align: "center" });
+
         pdf.setTextColor(...NAVY);
         pdf.setFontSize(12);
         pdf.setFont("helvetica", "bold");
-        pdf.text(title, margin, y);
-        y += 2;
+        pdf.text(title, margin + 8, y);
+        y += 3;
         pdf.setDrawColor(...GRAY_BORDER);
         pdf.setLineWidth(0.3);
         pdf.line(margin, y, pageWidth - margin, y);
@@ -287,8 +301,8 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         y += lines.length * 4.5 + 8;
       };
 
-      addSection("1. Ventas", analisisVentas());
-      addSection("2. Productos", analisisProductos());
+      addSection(1, "Ventas", analisisVentas());
+      addSection(2, "Productos", analisisProductos());
 
       // Tabla de productos top
       if (topProductos.length > 0) {
@@ -308,6 +322,10 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         pdf.setFont("helvetica", "normal");
         topProductos.forEach((p, i) => {
           checkPageBreak(6);
+          if (i % 2 === 0) {
+            pdf.setFillColor(254, 242, 242); // rojo muy claro, alterna las filas
+            pdf.rect(margin, y - 3.8, contentWidth, 5.5, "F");
+          }
           pdf.setTextColor(...GRAY_TEXT);
           pdf.setFontSize(9);
           pdf.text(String(i + 1), margin, y);
@@ -323,26 +341,43 @@ export default function Reportes({ token, orgId, orgName }: ReportesProps) {
         y += 6;
       }
 
-      addSection("3. Inventario", analisisInventario());
-      addSection("4. Finanzas", analisisFinanzas());
+      addSection(3, "Inventario", analisisInventario());
+      addSection(4, "Finanzas", analisisFinanzas());
 
-      // Recomendaciones
+      // Recomendaciones — caja con acento de color
       if (finanzas.tips && finanzas.tips.length > 0) {
-        checkPageBreak(15);
+        checkPageBreak(20);
+        // Primero medimos cuánto va a ocupar el texto para poder dibujar la caja detrás
+        pdf.setFontSize(9);
+        pdf.setFont("helvetica", "normal");
+        let measuredHeight = 12;
+        const allLines: string[][] = finanzas.tips.map((tip: string) => {
+          const lines = pdf.splitTextToSize(`•  ${tip}`, contentWidth - 10);
+          measuredHeight += lines.length * 4.3 + 2;
+          return lines;
+        });
+
+        checkPageBreak(measuredHeight + 5);
+
+        const boxTop = y - 5;
+        pdf.setFillColor(255, 251, 235);
+        pdf.roundedRect(margin, boxTop, contentWidth, measuredHeight, 2, 2, "F");
+        pdf.setFillColor(...AMBER_TEXT);
+        pdf.rect(margin, boxTop, 1.5, measuredHeight, "F");
+
         pdf.setTextColor(...AMBER_TEXT);
         pdf.setFontSize(8);
         pdf.setFont("helvetica", "bold");
-        pdf.text("RECOMENDACIONES", margin, y);
+        pdf.text("RECOMENDACIONES", margin + 5, y);
         y += 6;
         pdf.setTextColor(...GRAY_BODY);
         pdf.setFontSize(9);
         pdf.setFont("helvetica", "normal");
-        finanzas.tips.forEach((tip: string) => {
-          const lines = pdf.splitTextToSize(`•  ${tip}`, contentWidth);
-          checkPageBreak(lines.length * 4.3);
-          pdf.text(lines, margin, y);
+        allLines.forEach((lines) => {
+          pdf.text(lines, margin + 5, y);
           y += lines.length * 4.3 + 2;
         });
+        y += 4;
       }
 
       // Pie de página en todas las hojas

@@ -122,6 +122,38 @@ def check_and_generate_notifications(org_id: int):
                         'title': f"Llevas {days} días sin registrar ventas",
                         'message': "Registra tus ventas para mantener tus métricas al día."
                     }).execute()
+        # 3. Pedidos atorados — cada estatus tiene su propio umbral de urgencia:
+        # preparando no debería tardar (quedas mal con el cliente), enviado
+        # sale rápido de CEDIS, en tránsito es lo que más margen tiene.
+        UMBRALES_ATORO = {'preparando': 3, 'enviado': 2, 'en_transito': 5}
+        orders = supabase.table('orders') \
+            .select('id, customer_name, status, status_changed_at') \
+            .eq('org_id', org_id) \
+            .in_('status', list(UMBRALES_ATORO.keys())) \
+            .execute()
+
+        if orders.data:
+            existing_atorados = supabase.table('notifications').select('message') \
+                .eq('org_id', org_id).eq('type', 'pedido_atorado').eq('read', False).execute()
+            ya_notificados = {m['message'] for m in existing_atorados.data}
+
+            for o in orders.data:
+                threshold = UMBRALES_ATORO.get(o['status'])
+                if not o.get('status_changed_at') or not threshold:
+                    continue
+                # Solo tomamos la fecha (YYYY-MM-DD) sin importar si viene
+                # con hora completa o no — evita errores de parseo.
+                changed = datetime.strptime(o['status_changed_at'][:10], '%Y-%m-%d').date()
+                days_stuck = (date.today() - changed).days
+                if days_stuck >= threshold:
+                    marker = f"#{o['id']}"
+                    if not any(marker in msg for msg in ya_notificados):
+                        supabase.table('notifications').insert({
+                            'org_id': org_id,
+                            'type': 'pedido_atorado',
+                            'title': f"Pedido de {o['customer_name']} atorado",
+                            'message': f"Lleva {days_stuck} días en estatus \"{o['status']}\" (#{o['id']}). Revisa qué está pasando.",
+                        }).execute()
     except Exception as e:
         print(f"Error generando notificaciones: {e}", file=sys.stderr, flush=True)
 
@@ -465,8 +497,24 @@ def get_ventas():
             query = query.lte('sale_date', end)
 
         res = query.execute()
+        ventas = res.data
 
-        return jsonify({'ventas': res.data}), 200
+        # Vínculo bidireccional: si una venta generó un pedido (envío), lo
+        # marcamos aquí para mostrar el flag clickeable en la tabla de Ventas.
+        sale_ids = [v['id'] for v in ventas]
+        order_map = {}
+        if sale_ids:
+            orders_res = supabase.table('orders') \
+                .select('id, sale_id, status') \
+                .eq('org_id', org_id) \
+                .in_('sale_id', sale_ids) \
+                .execute()
+            order_map = {o['sale_id']: {'order_id': o['id'], 'status': o['status']} for o in orders_res.data if o.get('sale_id')}
+
+        for v in ventas:
+            v['order'] = order_map.get(v['id'])
+
+        return jsonify({'ventas': ventas}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -520,6 +568,8 @@ def crear_venta():
         org_id = data.get('org_id')
         payment_method = data.get('payment_method', 'efectivo')
         items = data.get('items', [])
+        customer_id = data.get('customer_id')  # opcional, solo si eligieron cliente
+        shipping = data.get('shipping')  # opcional: dict si activaron "¿Requiere envío?"
 
         if not items:
             return jsonify({'error': 'La venta debe tener al menos un producto'}), 400
@@ -536,6 +586,7 @@ def crear_venta():
             'payment_method': payment_method,
             'status': 'completada',
             'created_by': payload['user_id'],
+            'customer_id': customer_id,
         }).execute()
 
         for item in items:
@@ -566,7 +617,32 @@ def crear_venta():
                     'created_by': payload['user_id'],
                 }).execute()
 
-        return jsonify({'sale_id': sale_id, 'total': round(total, 2)}), 201
+        # Vínculo bidireccional: si activaron "¿Requiere envío?" en el modal,
+        # el pedido se crea aquí mismo, ya vinculado a esta venta.
+        order_info = None
+        if shipping:
+            order_res = supabase.table('orders').insert({
+                'org_id': org_id,
+                'sale_id': sale_id,
+                'customer_id': customer_id,
+                'customer_name': shipping.get('customer_name', ''),
+                'carrier': shipping.get('carrier', ''),
+                'tracking_number': shipping.get('tracking_number', ''),
+                'status': 'preparando',
+                'shipping_cost': shipping.get('shipping_cost', 0),
+                'street1': shipping.get('street1', ''),
+                'street2': shipping.get('street2', ''),
+                'city': shipping.get('city', ''),
+                'state': shipping.get('state', ''),
+                'postal_code': shipping.get('postal_code', ''),
+                'country': shipping.get('country', 'México'),
+                'notes': shipping.get('notes', ''),
+                'created_by': payload['user_id'],
+                'status_changed_at': datetime.utcnow().isoformat(),
+            }).execute()
+            order_info = order_res.data[0] if order_res.data else None
+
+        return jsonify({'sale_id': sale_id, 'total': round(total, 2), 'order': order_info}), 201
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -915,7 +991,40 @@ def get_clientes():
             .order('full_name') \
             .execute()
 
-        return jsonify({'clientes': res.data}), 200
+        clientes = res.data
+
+        # Ventas acreditadas: solo las que se volvieron pedido (tienen envío
+        # vinculado), sumadas desde sus ventas reales.
+        cliente_ids = [c['id'] for c in clientes]
+        credit_map = {}
+        if cliente_ids:
+            orders_res = supabase.table('orders') \
+                .select('customer_id, sale_id') \
+                .eq('org_id', org_id) \
+                .in_('customer_id', cliente_ids) \
+                .execute()
+
+            sale_ids = list({o['sale_id'] for o in orders_res.data if o.get('sale_id')})
+            sales_map = {}
+            if sale_ids:
+                sales_res = supabase.table('sales').select('id, total_amount').in_('id', sale_ids).execute()
+                sales_map = {s['id']: s['total_amount'] for s in sales_res.data}
+
+            for o in orders_res.data:
+                cid = o.get('customer_id')
+                if not cid:
+                    continue
+                if cid not in credit_map:
+                    credit_map[cid] = {'sales_count': 0, 'sales_total': 0}
+                credit_map[cid]['sales_count'] += 1
+                credit_map[cid]['sales_total'] += sales_map.get(o.get('sale_id'), 0)
+
+        for c in clientes:
+            credit = credit_map.get(c['id'], {'sales_count': 0, 'sales_total': 0})
+            c['sales_count'] = credit['sales_count']
+            c['sales_total'] = round(credit['sales_total'], 2)
+
+        return jsonify({'clientes': clientes}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -939,6 +1048,8 @@ def crear_cliente():
             'phone': data.get('phone', ''),
             'instagram': data.get('instagram', ''),
             'notes': data.get('notes', ''),
+            'gender': data.get('gender'),
+            'age_range': data.get('age_range'),
         }).execute()
 
         return jsonify({'cliente': res.data[0]}), 201
@@ -956,7 +1067,7 @@ def editar_cliente(cliente_id):
 
         data = request.json
         updates = {}
-        for field in ['full_name', 'email', 'phone', 'instagram', 'notes']:
+        for field in ['full_name', 'email', 'phone', 'instagram', 'notes', 'gender', 'age_range']:
             if field in data:
                 updates[field] = data[field]
 
@@ -965,6 +1076,30 @@ def editar_cliente(cliente_id):
 
         res = supabase.table('customers').update(updates).eq('id', cliente_id).execute()
         return jsonify({'cliente': res.data[0]}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/clientes/<int:cliente_id>/contacto', methods=['POST'])
+def registrar_contacto(cliente_id):
+    """Se llama cuando el dueño usa el botón de WhatsApp/Correo/Instagram
+    para contactar a un cliente — alimenta el color y la métrica de
+    'último approach' en la tabla de Clientes."""
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        channel = data.get('channel', 'otro')
+
+        supabase.table('customers').update({
+            'last_contacted_at': date.today().isoformat(),
+            'last_contacted_channel': channel,
+        }).eq('id', cliente_id).execute()
+
+        return jsonify({'status': 'ok'}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1010,26 +1145,51 @@ def get_pedidos():
 
 @app.route('/api/pedidos/crear', methods=['POST'])
 def crear_pedido():
+    """Pedido creado directamente desde Pedidos: puede vincularse a una
+    venta existente que aún no tenga pedido (toggle en el modal), o quedar
+    independiente — en cuyo caso pide un motivo (reposición, muestra, etc.)."""
     try:
         payload = get_token_payload()
         if not payload:
             return jsonify({'error': 'Token inválido'}), 401
 
         data = request.json
+        org_id = data.get('org_id')
+        sale_id = data.get('sale_id')
+        origin_reason = data.get('origin_reason')
+
         if not data.get('customer_name'):
             return jsonify({'error': 'El nombre del cliente es obligatorio'}), 400
 
+        if sale_id:
+            sale_res = supabase.table('sales').select('id').eq('id', sale_id).eq('org_id', org_id).execute()
+            if not sale_res.data:
+                return jsonify({'error': 'Esa venta no se encontró'}), 404
+            linked_res = supabase.table('orders').select('id').eq('sale_id', sale_id).execute()
+            if linked_res.data:
+                return jsonify({'error': 'Esa venta ya tiene un pedido vinculado'}), 400
+        elif not origin_reason:
+            return jsonify({'error': 'Indica el motivo del pedido'}), 400
+
         res = supabase.table('orders').insert({
-            'org_id': data['org_id'],
-            'sale_id': data.get('sale_id'),
+            'org_id': org_id,
+            'sale_id': sale_id,
+            'customer_id': data.get('customer_id'),
             'customer_name': data['customer_name'],
             'carrier': data.get('carrier', ''),
             'tracking_number': data.get('tracking_number', ''),
             'status': data.get('status', 'preparando'),
             'shipping_cost': data.get('shipping_cost', 0),
-            'address': data.get('address', ''),
+            'street1': data.get('street1', ''),
+            'street2': data.get('street2', ''),
+            'city': data.get('city', ''),
+            'state': data.get('state', ''),
+            'postal_code': data.get('postal_code', ''),
+            'country': data.get('country', 'México'),
             'notes': data.get('notes', ''),
+            'origin_reason': origin_reason if not sale_id else None,
             'created_by': payload['user_id'],
+            'status_changed_at': datetime.utcnow().isoformat(),
         }).execute()
 
         return jsonify({'pedido': res.data[0]}), 201
@@ -1046,21 +1206,54 @@ def editar_pedido(pedido_id):
             return jsonify({'error': 'Token inválido'}), 401
 
         data = request.json
+        new_status = data.get('status')
+
+        if new_status == 'devuelto' and not data.get('return_reason'):
+            return jsonify({'error': 'Indica la razón de la devolución'}), 400
+
         updates = {}
-        for field in ['customer_name', 'carrier', 'tracking_number', 'status', 'shipping_cost', 'address', 'notes']:
+        for field in ['customer_name', 'carrier', 'tracking_number', 'status', 'shipping_cost',
+                      'street1', 'street2', 'city', 'state', 'postal_code', 'country',
+                      'notes', 'return_reason']:
             if field in data:
                 updates[field] = data[field]
 
-        # Fechas automáticas según el estado
-        if data.get('status') == 'enviado':
-            updates['shipped_at'] = date.today().isoformat()
-        if data.get('status') == 'entregado':
-            updates['delivered_at'] = date.today().isoformat()
+        # Obtenemos el pedido actual para saber si el estatus realmente cambió
+        current_res = supabase.table('orders').select('status, customer_name, org_id').eq('id', pedido_id).execute()
+        if not current_res.data:
+            return jsonify({'error': 'Pedido no encontrado'}), 404
+        current = current_res.data[0]
+        status_changed = new_status and new_status != current['status']
+
+        if status_changed:
+            updates['status_changed_at'] = datetime.utcnow().isoformat()
+            if new_status == 'enviado':
+                updates['shipped_at'] = date.today().isoformat()
+            if new_status == 'entregado':
+                updates['delivered_at'] = date.today().isoformat()
 
         if not updates:
             return jsonify({'error': 'Nada que actualizar'}), 400
 
         res = supabase.table('orders').update(updates).eq('id', pedido_id).execute()
+
+        # Notificaciones inmediatas al llegar a un estatus final
+        if status_changed and new_status == 'entregado':
+            supabase.table('notifications').insert({
+                'org_id': current['org_id'],
+                'type': 'pedido_entregado',
+                'title': f"Pedido de {current['customer_name']} entregado",
+                'message': 'El paquete llegó a su destino correctamente.',
+            }).execute()
+        elif status_changed and new_status == 'devuelto':
+            razon = data.get('return_reason', 'Sin especificar')
+            supabase.table('notifications').insert({
+                'org_id': current['org_id'],
+                'type': 'pedido_devuelto',
+                'title': f"Pedido de {current['customer_name']} devuelto",
+                'message': f"Razón: {razon}. Sugerimos contactar al cliente y no perder la relación.",
+            }).execute()
+
         return jsonify({'pedido': res.data[0]}), 200
 
     except Exception as e:
@@ -1631,6 +1824,7 @@ def get_perfil():
                 'name': org['name'],
                 'industry': org.get('industry'),
                 'created_at': org.get('created_at'),
+                'contact_cadence_days': org.get('contact_cadence_days', 30),
             },
             'plan': {
                 'name': plan['name'] if plan else 'Sin plan',
@@ -1651,6 +1845,29 @@ def get_perfil():
                 'growth_pct': growth_pct,
             }
         }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/perfil/cadencia', methods=['POST'])
+def set_contact_cadence():
+    """Cada cuántos días el negocio quiere volver a contactar a sus clientes.
+    Alimenta el color y la métrica de 'último approach' en Clientes."""
+    try:
+        payload = get_token_payload()
+        if not payload or payload['role'] not in ['owner', 'admin']:
+            return jsonify({'error': 'No tienes permisos'}), 403
+
+        data = request.json
+        org_id = data.get('org_id')
+        days = data.get('contact_cadence_days')
+
+        if not isinstance(days, int) or days < 1:
+            return jsonify({'error': 'Ingresa un número de días válido'}), 400
+
+        supabase.table('organizations').update({'contact_cadence_days': days}).eq('id', org_id).execute()
+        return jsonify({'status': 'ok', 'contact_cadence_days': days}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500

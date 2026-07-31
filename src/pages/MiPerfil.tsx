@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   X, ChevronDown, KeyRound, UserPlus, Pencil, TrendingUp,
-  Building2, CreditCard, Users, Loader, Check, Settings,
+  Building2, CreditCard, Users, Loader, Check, Settings, Clock,
 } from "lucide-react";
 import AgregarHerramienta from "./AgregarHerramienta";
 
@@ -57,6 +57,11 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
   const [totalMonthly, setTotalMonthly] = useState(0);
   const [showMarketplace, setShowMarketplace] = useState(false);
 
+  // Cadencia de contacto con clientes (alimenta colores en Clientes)
+  const [cadenceDays, setCadenceDays] = useState(30);
+  const [cadenceSubmitting, setCadenceSubmitting] = useState(false);
+  const [cadenceSuccess, setCadenceSuccess] = useState(false);
+
   // Cambiar mi contraseña
   const [pwForm, setPwForm] = useState({ current: "", nueva: "", confirmar: "" });
   const [pwSubmitting, setPwSubmitting] = useState(false);
@@ -81,13 +86,26 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
   const fetchPerfil = async () => {
     setLoading(true);
     setError("");
+    const url = `https://toolbox-backend-rkit.onrender.com/api/perfil?org_id=${orgId}`;
     try {
-      const res = await fetch(`https://toolbox-backend-rkit.onrender.com/api/perfil?org_id=${orgId}`, { headers });
+      const res = await fetch(url, { headers });
       if (!res.ok) throw new Error();
       const d = await res.json();
       setData(d);
+      setCadenceDays(d.org?.contact_cadence_days ?? 30);
     } catch {
-      setError("No se pudo cargar tu perfil.");
+      // Reintento único: si Render acaba de despertar, la primera llamada
+      // a veces se cae aunque el servidor ya esté sirviendo bien.
+      try {
+        await new Promise((r) => setTimeout(r, 1800));
+        const retryRes = await fetch(url, { headers });
+        if (!retryRes.ok) throw new Error();
+        const d = await retryRes.json();
+        setData(d);
+        setCadenceDays(d.org?.contact_cadence_days ?? 30);
+      } catch {
+        setError("No se pudo cargar tu perfil.");
+      }
     } finally {
       setLoading(false);
     }
@@ -107,6 +125,20 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
   };
 
   useEffect(() => { fetchPerfil(); fetchGestion(); }, [orgId]);
+
+  const saveCadence = async () => {
+    setCadenceSubmitting(true);
+    setCadenceSuccess(false);
+    try {
+      const res = await fetch("https://toolbox-backend-rkit.onrender.com/api/perfil/cadencia", {
+        method: "POST", headers,
+        body: JSON.stringify({ org_id: orgId, contact_cadence_days: cadenceDays }),
+      });
+      if (res.ok) setCadenceSuccess(true);
+    } catch { /* silencioso */ } finally {
+      setCadenceSubmitting(false);
+    }
+  };
 
   const cambiarPassword = async () => {
     setPwError("");
@@ -331,6 +363,38 @@ export default function MiPerfil({ token, orgId, role }: MiPerfilProps) {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* Cadencia de contacto con clientes */}
+          {isOwner && (
+            <div className="rounded-2xl border border-border bg-background p-6 mb-8">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock size={15} className="text-muted-foreground" />
+                <h3 className="text-sm font-semibold text-foreground">Seguimiento de clientes</h3>
+              </div>
+              <p className="text-xs text-muted-foreground mb-4">
+                Cada cuántos días quieres volver a contactar a un cliente. Esto define los colores y la alerta en Clientes.
+              </p>
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  min={1}
+                  value={cadenceDays}
+                  onChange={(e) => setCadenceDays(parseInt(e.target.value) || 1)}
+                  className="w-24 border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)]"
+                />
+                <span className="text-sm text-muted-foreground">días</span>
+                <button onClick={saveCadence} disabled={cadenceSubmitting}
+                  className="ml-auto px-4 py-2 bg-[var(--brand-red)] text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50">
+                  {cadenceSubmitting ? "Guardando..." : "Guardar"}
+                </button>
+              </div>
+              {cadenceSuccess && (
+                <p className="text-xs text-emerald-600 mt-2 inline-flex items-center gap-1">
+                  <Check size={12} /> Guardado
+                </p>
+              )}
             </div>
           )}
 

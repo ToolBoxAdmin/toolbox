@@ -56,6 +56,9 @@ const EMPLOYEE_SECTIONS: Section[] = ["dashboard", "ventas", "productos", "inven
 const NOTIF_COLORS: Record<string, string> = {
   stock_bajo: "bg-amber-400",
   sin_ventas: "bg-red-400",
+  pedido_atorado: "bg-amber-400",
+  pedido_entregado: "bg-emerald-400",
+  pedido_devuelto: "bg-red-400",
 };
 
 // Herramientas que se activan/desactivan desde el marketplace
@@ -474,7 +477,7 @@ export default function Dashboard_Organization() {
           ) : (
             <>
               {section === "ventas" && user?.token && orgData && (
-                <Ventas key={refreshToken} token={user.token} orgId={orgData.org_id} />
+                <Ventas key={refreshToken} token={user.token} orgId={orgData.org_id} onGoPedidos={() => setSection("pedidos")} />
               )}
               {section === "productos" && user?.token && orgData && (
                 <Productos key={refreshToken} token={user.token} orgId={orgData.org_id} />

@@ -1,16 +1,22 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, X, ChevronDown, ChevronUp, Package, Truck } from "lucide-react";
 
 interface VentasProps {
   token: string;
   orgId: number;
+  onGoPedidos?: () => void;
 }
 
-type Period = "today" | "week" | "month" | "year" | "all" | "custom";
+type Period = "today" | "week" | "month" | "year" | "custom";
 
 interface PeriodRange {
   start: string;
   end: string;
+}
+
+interface OrderRef {
+  order_id: number;
+  status: string;
 }
 
 interface Venta {
@@ -19,6 +25,7 @@ interface Venta {
   total_amount: number;
   payment_method: string;
   status: string;
+  order?: OrderRef | null;
 }
 
 interface VentaItem {
@@ -43,6 +50,11 @@ interface SaleItemForm {
   unit_price: number;
 }
 
+interface Cliente {
+  id: number;
+  full_name: string;
+}
+
 function getRange(period: Period, custom: PeriodRange): PeriodRange {
   const today = new Date();
   const fmt = (d: Date) => d.toISOString().split("T")[0];
@@ -59,10 +71,6 @@ function getRange(period: Period, custom: PeriodRange): PeriodRange {
   if (period === "year") {
     return { start: fmt(new Date(today.getFullYear(), 0, 1)), end: fmt(today) };
   }
-
-  if (period === "all") {
-    return { start: "2000-01-01", end: fmt(today) };
-    }
   return custom;
 }
 
@@ -75,7 +83,7 @@ function formatDate(dateStr: string) {
 }
 
 const PERIOD_LABELS: Record<Period, string> = {
-  today: "Hoy", week: "Esta semana", month: "Este mes", year: "Este año", all: "Todo", custom: "Personalizado",
+  today: "Hoy", week: "Esta semana", month: "Este mes", year: "Este año", custom: "Personalizado",
 };
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -90,7 +98,25 @@ const PAYMENT_LABELS: Record<string, string> = {
   transferencia: "Transferencia",
 };
 
-export default function Ventas({ token, orgId }: VentasProps) {
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  preparando: "Preparando",
+  enviado: "Enviado",
+  en_transito: "En tránsito",
+  entregado: "Entregado",
+  devuelto: "Devuelto",
+};
+
+const ORDER_STATUS_COLORS: Record<string, string> = {
+  preparando: "bg-gray-100 text-gray-600",
+  enviado: "bg-blue-100 text-blue-700",
+  en_transito: "bg-amber-100 text-amber-700",
+  entregado: "bg-emerald-100 text-emerald-700",
+  devuelto: "bg-red-100 text-red-600",
+};
+
+const CARRIERS = ["Estafeta", "DHL", "FedEx", "UPS", "Paquetexpress", "99minutos", "Correos de México", "Otro"];
+
+export default function Ventas({ token, orgId, onGoPedidos }: VentasProps) {
   const [period, setPeriod] = useState<Period>("month");
   const [custom, setCustom] = useState<PeriodRange>({ start: "", end: "" });
   const [showCustom, setShowCustom] = useState(false);
@@ -111,6 +137,19 @@ export default function Ventas({ token, orgId }: VentasProps) {
   const [paymentMethod, setPaymentMethod] = useState("efectivo");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+
+  // Envío / pedido vinculado
+  const [requiereEnvio, setRequiereEnvio] = useState(false);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [shipping, setShipping] = useState({
+    customer_id: "" as string | number,
+    customer_name: "",
+    carrier: "Estafeta",
+    tracking_number: "",
+    shipping_cost: "",
+    street1: "", street2: "", city: "", state: "", postal_code: "", country: "México",
+    notes: "",
+  });
 
   const range = getRange(period, custom);
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
@@ -146,7 +185,7 @@ export default function Ventas({ token, orgId }: VentasProps) {
       return;
     }
     setExpandedId(ventaId);
-    if (ventaItems[ventaId]) return; // ya cargado
+    if (ventaItems[ventaId]) return;
 
     setLoadingItems(ventaId);
     try {
@@ -168,12 +207,31 @@ export default function Ventas({ token, orgId }: VentasProps) {
     setItems([]);
     setPaymentMethod("efectivo");
     setSubmitError("");
+    setRequiereEnvio(false);
+    setShipping({
+      customer_id: "", customer_name: "", carrier: "Estafeta", tracking_number: "",
+      shipping_cost: "", street1: "", street2: "", city: "", state: "", postal_code: "",
+      country: "México", notes: "",
+    });
     try {
       const res = await fetch(`https://toolbox-backend-rkit.onrender.com/api/productos?org_id=${orgId}`, { headers });
       const data = await res.json();
       setProductos(data.productos);
     } catch {
       setSubmitError("No se pudieron cargar los productos.");
+    }
+    // Clientes es opcional aquí — si el usuario no tiene permiso (empleado)
+    // simplemente no se muestra el selector, sin bloquear la venta.
+    try {
+      const res = await fetch(`https://toolbox-backend-rkit.onrender.com/api/clientes?org_id=${orgId}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setClientes(data.clientes ?? []);
+      } else {
+        setClientes([]);
+      }
+    } catch {
+      setClientes([]);
     }
   };
 
@@ -194,15 +252,47 @@ export default function Ventas({ token, orgId }: VentasProps) {
 
   const total = items.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
 
+  const onSelectCliente = (id: string) => {
+    const cliente = clientes.find((c) => c.id.toString() === id);
+    setShipping((s) => ({
+      ...s,
+      customer_id: id,
+      customer_name: cliente ? cliente.full_name : s.customer_name,
+    }));
+  };
+
   const submitVenta = async () => {
     if (items.length === 0) { setSubmitError("Agrega al menos un producto."); return; }
+    if (requiereEnvio && !shipping.customer_name.trim()) {
+      setSubmitError("Ingresa el nombre de quien recibe el envío.");
+      return;
+    }
     setSubmitting(true);
     setSubmitError("");
     try {
+      const body: any = { org_id: orgId, payment_method: paymentMethod, items };
+
+      if (requiereEnvio) {
+        body.customer_id = shipping.customer_id ? parseInt(shipping.customer_id as string) : null;
+        body.shipping = {
+          customer_name: shipping.customer_name,
+          carrier: shipping.carrier,
+          tracking_number: shipping.tracking_number,
+          shipping_cost: parseFloat(shipping.shipping_cost) || 0,
+          street1: shipping.street1,
+          street2: shipping.street2,
+          city: shipping.city,
+          state: shipping.state,
+          postal_code: shipping.postal_code,
+          country: shipping.country,
+          notes: shipping.notes,
+        };
+      }
+
       const res = await fetch("https://toolbox-backend-rkit.onrender.com/api/ventas/crear", {
         method: "POST",
         headers,
-        body: JSON.stringify({ org_id: orgId, payment_method: paymentMethod, items }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -304,13 +394,14 @@ export default function Ventas({ token, orgId }: VentasProps) {
                 <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Total</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Método</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Estado</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Envío</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {loading ? (
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i}>
-                    {Array.from({ length: 6 }).map((_, j) => (
+                    {Array.from({ length: 7 }).map((_, j) => (
                       <td key={j} className="px-6 py-4">
                         <div className="h-4 bg-muted rounded animate-pulse" />
                       </td>
@@ -319,7 +410,7 @@ export default function Ventas({ token, orgId }: VentasProps) {
                 ))
               ) : ventas.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={7} className="px-6 py-12 text-center text-sm text-muted-foreground">
                     Sin ventas en este periodo.
                   </td>
                 </tr>
@@ -352,12 +443,25 @@ export default function Ventas({ token, orgId }: VentasProps) {
                             {st.label}
                           </span>
                         </td>
+                        <td className="px-6 py-4">
+                          {v.order ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onGoPedidos?.(); }}
+                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 ${ORDER_STATUS_COLORS[v.order.status] ?? "bg-muted text-muted-foreground"}`}
+                            >
+                              <Truck size={11} />
+                              {ORDER_STATUS_LABELS[v.order.status] ?? v.order.status}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
                       </tr>
 
                       {/* Desglose expandible */}
                       {isExpanded && (
                         <tr key={`${v.id}-items`} className="bg-muted/20">
-                          <td colSpan={6} className="px-8 py-3">
+                          <td colSpan={7} className="px-8 py-3">
                             {isLoadingThis ? (
                               <p className="text-xs text-muted-foreground py-2">Cargando productos...</p>
                             ) : itemsDeVenta.length === 0 ? (
@@ -452,6 +556,104 @@ export default function Ventas({ token, orgId }: VentasProps) {
                   </select>
                   <ChevronDown size={14} className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none" />
                 </div>
+              </div>
+
+              {/* Toggle envío */}
+              <div className="rounded-xl border border-border p-4 mb-4">
+                <label className="flex items-center justify-between cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <Package size={16} className="text-muted-foreground" />
+                    <span className="text-sm font-medium text-foreground">¿Requiere envío?</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setRequiereEnvio((v) => !v)}
+                    className={`relative w-10 h-6 rounded-full transition-colors ${requiereEnvio ? "bg-[var(--brand-red)]" : "bg-muted"}`}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${requiereEnvio ? "translate-x-4" : ""}`} />
+                  </button>
+                </label>
+
+                {requiereEnvio && (
+                  <div className="mt-4 space-y-3 pt-4 border-t border-border">
+                    {clientes.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Cliente (opcional)</label>
+                        <div className="relative">
+                          <select value={shipping.customer_id} onChange={(e) => onSelectCliente(e.target.value)}
+                            className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background appearance-none focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)]">
+                            <option value="">Sin cliente</option>
+                            {clientes.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+                          </select>
+                          <ChevronDown size={14} className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none" />
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Nombre de quien recibe *</label>
+                      <input type="text" placeholder="Nombre completo" value={shipping.customer_name}
+                        onChange={(e) => setShipping((s) => ({ ...s, customer_name: e.target.value }))}
+                        className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Paquetería</label>
+                        <div className="relative">
+                          <select value={shipping.carrier} onChange={(e) => setShipping((s) => ({ ...s, carrier: e.target.value }))}
+                            className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background appearance-none focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)]">
+                            {CARRIERS.map((c) => <option key={c}>{c}</option>)}
+                          </select>
+                          <ChevronDown size={14} className="absolute right-3 top-3.5 text-muted-foreground pointer-events-none" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Costo de envío</label>
+                        <input type="number" placeholder="0.00" value={shipping.shipping_cost}
+                          onChange={(e) => setShipping((s) => ({ ...s, shipping_cost: e.target.value }))}
+                          className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Número de guía (opcional)</label>
+                      <input type="text" placeholder="Se puede agregar después" value={shipping.tracking_number}
+                        onChange={(e) => setShipping((s) => ({ ...s, tracking_number: e.target.value }))}
+                        className="w-full border border-border rounded-xl px-4 py-2.5 text-sm font-mono text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+                    </div>
+
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide pt-1">Dirección de entrega</p>
+
+                    <input type="text" placeholder="Calle y número" value={shipping.street1}
+                      onChange={(e) => setShipping((s) => ({ ...s, street1: e.target.value }))}
+                      className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+                    <input type="text" placeholder="Depto, referencias (opcional)" value={shipping.street2}
+                      onChange={(e) => setShipping((s) => ({ ...s, street2: e.target.value }))}
+                      className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <input type="text" placeholder="Delegación / Ciudad" value={shipping.city}
+                        onChange={(e) => setShipping((s) => ({ ...s, city: e.target.value }))}
+                        className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+                      <input type="text" placeholder="Estado" value={shipping.state}
+                        onChange={(e) => setShipping((s) => ({ ...s, state: e.target.value }))}
+                        className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <input type="text" placeholder="Código postal" value={shipping.postal_code}
+                        onChange={(e) => setShipping((s) => ({ ...s, postal_code: e.target.value }))}
+                        className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+                      <input type="text" placeholder="País" value={shipping.country}
+                        onChange={(e) => setShipping((s) => ({ ...s, country: e.target.value }))}
+                        className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+                    </div>
+
+                    <textarea placeholder="Notas del envío (opcional)" value={shipping.notes} rows={2}
+                      onChange={(e) => setShipping((s) => ({ ...s, notes: e.target.value }))}
+                      className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground resize-none" />
+                  </div>
+                )}
               </div>
 
               {submitError && (

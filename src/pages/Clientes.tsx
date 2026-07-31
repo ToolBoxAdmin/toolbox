@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, X, Search, MessageCircle, Mail, AtSign, Pencil, Trash2, Users, Send } from "lucide-react";
+import { Plus, X, Search, MessageCircle, Mail, AtSign, Pencil, Trash2, Users, Send, Clock } from "lucide-react";
 
 interface ClientesProps {
   token: string;
@@ -13,9 +13,12 @@ interface Cliente {
   phone: string;
   instagram: string;
   notes: string;
-  total_spent: number;
-  visit_count: number;
-  last_visit: string | null;
+  gender: string | null;
+  age_range: string | null;
+  last_contacted_at: string | null;
+  last_contacted_channel: string | null;
+  sales_count: number;
+  sales_total: number;
 }
 
 const TEMPLATES = [
@@ -36,6 +39,23 @@ const TEMPLATES = [
   },
 ];
 
+const GENDERS = [
+  { value: "M", label: "Masculino" },
+  { value: "F", label: "Femenino" },
+  { value: "Otro", label: "Otro" },
+  { value: "NA", label: "Prefiero no decir" },
+];
+
+const AGE_RANGES = [
+  { value: "<18", label: "Menor a 18" },
+  { value: "18-24", label: "18-24" },
+  { value: "25-34", label: "25-34" },
+  { value: "35-44", label: "35-44" },
+  { value: "45-54", label: "45-54" },
+  { value: "55-64", label: "55-64" },
+  { value: "65+", label: "65+" },
+];
+
 function formatCurrency(n: number) {
   return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 2 }).format(n);
 }
@@ -46,16 +66,45 @@ function cleanPhone(phone: string) {
   return digits;
 }
 
+function diasDesde(dateStr: string) {
+  const then = new Date(dateStr + "T12:00:00");
+  return Math.floor((Date.now() - then.getTime()) / 86400000);
+}
+
+// Verde si se contactó recientemente, ámbar si se acerca la fecha,
+// rojo si ya se pasó de la cadencia definida en Mi Perfil.
+function contactoStatus(c: Cliente, cadenceDays: number): "ok" | "soon" | "overdue" | "never" {
+  if (!c.last_contacted_at) return "never";
+  const dias = diasDesde(c.last_contacted_at);
+  if (dias < cadenceDays * 0.7) return "ok";
+  if (dias < cadenceDays) return "soon";
+  return "overdue";
+}
+
+const CONTACT_COLORS: Record<string, string> = {
+  ok: "bg-emerald-100 text-emerald-700",
+  soon: "bg-amber-100 text-amber-700",
+  overdue: "bg-red-100 text-red-600",
+  never: "bg-gray-100 text-gray-600",
+};
+
 export default function Clientes({ token, orgId }: ClientesProps) {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [cadenceDays, setCadenceDays] = useState(30);
+  const [orgName, setOrgName] = useState("nuestra tienda");
+
+  // Filtros estilo PowerBI: multi-select por género/edad + toggle de seguimiento
+  const [filterGender, setFilterGender] = useState<Set<string>>(new Set());
+  const [filterAge, setFilterAge] = useState<Set<string>>(new Set());
+  const [onlyNeedsContact, setOnlyNeedsContact] = useState(false);
 
   // Modal crear/editar
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Cliente | null>(null);
-  const [form, setForm] = useState({ full_name: "", email: "", phone: "", instagram: "", notes: "" });
+  const [form, setForm] = useState({ full_name: "", email: "", phone: "", instagram: "", notes: "", gender: "", age_range: "" });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
@@ -67,7 +116,6 @@ export default function Clientes({ token, orgId }: ClientesProps) {
   const [deleting, setDeleting] = useState<Cliente | null>(null);
 
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
-  const orgName = localStorage.getItem("org_name") ?? "nuestra tienda";
 
   const fetchClientes = async () => {
     setLoading(true);
@@ -84,11 +132,23 @@ export default function Clientes({ token, orgId }: ClientesProps) {
     }
   };
 
-  useEffect(() => { fetchClientes(); }, [orgId]);
+  useEffect(() => {
+    fetchClientes();
+    (async () => {
+      try {
+        const res = await fetch(`https://toolbox-backend-rkit.onrender.com/api/perfil?org_id=${orgId}`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          setCadenceDays(data.org?.contact_cadence_days ?? 30);
+          setOrgName(data.org?.name ?? "nuestra tienda");
+        }
+      } catch { /* silencioso */ }
+    })();
+  }, [orgId]);
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ full_name: "", email: "", phone: "", instagram: "", notes: "" });
+    setForm({ full_name: "", email: "", phone: "", instagram: "", notes: "", gender: "", age_range: "" });
     setSubmitError("");
     setShowModal(true);
   };
@@ -101,6 +161,8 @@ export default function Clientes({ token, orgId }: ClientesProps) {
       phone: c.phone ?? "",
       instagram: c.instagram ?? "",
       notes: c.notes ?? "",
+      gender: c.gender ?? "",
+      age_range: c.age_range ?? "",
     });
     setSubmitError("");
     setShowModal(true);
@@ -114,10 +176,11 @@ export default function Clientes({ token, orgId }: ClientesProps) {
       const url = editing
         ? `https://toolbox-backend-rkit.onrender.com/api/clientes/${editing.id}`
         : "https://toolbox-backend-rkit.onrender.com/api/clientes/crear";
+      const payload = { ...form, gender: form.gender || null, age_range: form.age_range || null };
       const res = await fetch(url, {
         method: editing ? "PATCH" : "POST",
         headers,
-        body: JSON.stringify(editing ? form : { ...form, org_id: orgId }),
+        body: JSON.stringify(editing ? payload : { ...payload, org_id: orgId }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -145,12 +208,36 @@ export default function Clientes({ token, orgId }: ClientesProps) {
     }
   };
 
+  // Registra el approach al usar cualquiera de los botones de contacto
+  const marcarContactado = async (clienteId: number, channel: string) => {
+    try {
+      await fetch(`https://toolbox-backend-rkit.onrender.com/api/clientes/${clienteId}/contacto`, {
+        method: "POST", headers, body: JSON.stringify({ channel }),
+      });
+      const today = new Date().toISOString().split("T")[0];
+      setClientes((prev) => prev.map((c) =>
+        c.id === clienteId ? { ...c, last_contacted_at: today, last_contacted_channel: channel } : c
+      ));
+    } catch { /* silencioso */ }
+  };
+
+  const toggleFilter = (set: Set<string>, setFn: (s: Set<string>) => void, value: string) => {
+    const next = new Set(set);
+    if (next.has(value)) next.delete(value); else next.add(value);
+    setFn(next);
+  };
+
   const filtered = clientes.filter((c) => {
     const q = search.toLowerCase();
-    return c.full_name.toLowerCase().includes(q) ||
+    const matchSearch = c.full_name.toLowerCase().includes(q) ||
       (c.email ?? "").toLowerCase().includes(q) ||
       (c.phone ?? "").includes(q) ||
       (c.instagram ?? "").toLowerCase().includes(q);
+    const matchGender = filterGender.size === 0 || (c.gender && filterGender.has(c.gender));
+    const matchAge = filterAge.size === 0 || (c.age_range && filterAge.has(c.age_range));
+    const status = contactoStatus(c, cadenceDays);
+    const matchContact = !onlyNeedsContact || status === "overdue" || status === "never";
+    return matchSearch && matchGender && matchAge && matchContact;
   });
 
   const selectedTemplate = TEMPLATES.find((t) => t.id === template) ?? TEMPLATES[0];
@@ -174,11 +261,46 @@ export default function Clientes({ token, orgId }: ClientesProps) {
       </div>
 
       {/* Búsqueda */}
-      <div className="relative mb-6">
+      <div className="relative mb-4">
         <Search size={15} className="absolute left-4 top-3.5 text-muted-foreground" />
         <input type="text" placeholder="Buscar por nombre, correo, teléfono o Instagram..."
           value={search} onChange={(e) => setSearch(e.target.value)}
           className="w-full border border-border rounded-xl pl-11 pr-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+      </div>
+
+      {/* Filtros estilo PowerBI */}
+      <div className="rounded-xl border border-border bg-background p-4 mb-6 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground w-20 shrink-0">Género</span>
+          {GENDERS.map((g) => (
+            <button key={g.value} onClick={() => toggleFilter(filterGender, setFilterGender, g.value)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                filterGender.has(g.value) ? "bg-[var(--brand-red)] text-white" : "border border-border text-muted-foreground hover:bg-muted"
+              }`}>
+              {g.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground w-20 shrink-0">Edad</span>
+          {AGE_RANGES.map((a) => (
+            <button key={a.value} onClick={() => toggleFilter(filterAge, setFilterAge, a.value)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                filterAge.has(a.value) ? "bg-[var(--brand-red)] text-white" : "border border-border text-muted-foreground hover:bg-muted"
+              }`}>
+              {a.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 pt-1 border-t border-border">
+          <button onClick={() => setOnlyNeedsContact((v) => !v)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors mt-3 ${
+              onlyNeedsContact ? "bg-amber-500 text-white" : "border border-border text-muted-foreground hover:bg-muted"
+            }`}>
+            <Clock size={12} />
+            Sin contacto reciente
+          </button>
+        </div>
       </div>
 
       {error && <div className="rounded-lg bg-[var(--tile-red)] px-4 py-3 text-sm text-[var(--brand-red)] mb-6">{error}</div>}
@@ -190,9 +312,9 @@ export default function Clientes({ token, orgId }: ClientesProps) {
             <thead className="bg-muted/50 border-b border-border">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Cliente</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Teléfono</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Instagram</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Notas</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Género / Edad</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Último approach</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Ventas acreditadas</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide">Acciones</th>
               </tr>
             </thead>
@@ -210,41 +332,59 @@ export default function Clientes({ token, orgId }: ClientesProps) {
                   <td colSpan={5} className="px-6 py-16 text-center">
                     <Users size={32} className="text-muted-foreground mx-auto mb-3" />
                     <p className="text-sm text-muted-foreground">
-                      {search ? "Sin clientes que coincidan." : "Aún no tienes clientes registrados. Agrega el primero."}
+                      {search || filterGender.size || filterAge.size || onlyNeedsContact ? "Sin clientes que coincidan con los filtros." : "Aún no tienes clientes registrados. Agrega el primero."}
                     </p>
                   </td>
                 </tr>
               ) : (
-                filtered.map((c) => (
-                  <tr key={c.id} className="hover:bg-muted/20 transition-colors">
-                    <td className="px-6 py-4">
-                      <p className="text-sm font-medium text-foreground">{c.full_name}</p>
-                      {c.email && <p className="text-xs text-muted-foreground">{c.email}</p>}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-muted-foreground">{c.phone || "—"}</td>
-                    <td className="px-6 py-4 text-sm text-muted-foreground">{c.instagram ? `@${c.instagram.replace("@", "")}` : "—"}</td>
-                    <td className="px-6 py-4 text-sm text-muted-foreground max-w-48 truncate">{c.notes || "—"}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button onClick={() => setContactClient(c)}
-                          title="Enviar mensaje"
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--brand-red)] hover:bg-[var(--tile-red)] transition-colors">
-                          <Send size={14} />
-                        </button>
-                        <button onClick={() => openEdit(c)}
-                          title="Editar"
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
-                          <Pencil size={14} />
-                        </button>
-                        <button onClick={() => setDeleting(c)}
-                          title="Eliminar"
-                          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-red-50 hover:text-red-500 transition-colors">
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                filtered.map((c) => {
+                  const status = contactoStatus(c, cadenceDays);
+                  const genderLabel = GENDERS.find((g) => g.value === c.gender)?.label;
+                  const ageLabel = AGE_RANGES.find((a) => a.value === c.age_range)?.label;
+
+                  return (
+                    <tr key={c.id} className="hover:bg-muted/20 transition-colors">
+                      <td className="px-6 py-4">
+                        <p className="text-sm font-medium text-foreground">{c.full_name}</p>
+                        {(c.email || c.phone) && <p className="text-xs text-muted-foreground">{c.email || c.phone}</p>}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-muted-foreground">
+                        {genderLabel || ageLabel ? `${genderLabel ?? "—"} · ${ageLabel ?? "—"}` : "—"}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${CONTACT_COLORS[status]}`}>
+                          {c.last_contacted_at ? `Hace ${diasDesde(c.last_contacted_at)} días` : "Sin contacto"}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-foreground">
+                        {c.sales_count > 0 ? (
+                          <span>{formatCurrency(c.sales_total)} <span className="text-muted-foreground">({c.sales_count})</span></span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => setContactClient(c)}
+                            title="Enviar mensaje"
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--brand-red)] hover:bg-[var(--tile-red)] transition-colors">
+                            <Send size={14} />
+                          </button>
+                          <button onClick={() => openEdit(c)}
+                            title="Editar"
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => setDeleting(c)}
+                            title="Eliminar"
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-red-50 hover:text-red-500 transition-colors">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -262,7 +402,7 @@ export default function Clientes({ token, orgId }: ClientesProps) {
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
               <div>
                 <label className="text-sm font-medium text-foreground mb-1.5 block">Nombre completo *</label>
                 <input type="text" placeholder="María González" value={form.full_name}
@@ -290,6 +430,29 @@ export default function Clientes({ token, orgId }: ClientesProps) {
                 <input type="text" placeholder="@maria.gonzalez" value={form.instagram}
                   onChange={(e) => setForm((f) => ({ ...f, instagram: e.target.value }))}
                   className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)] placeholder:text-muted-foreground" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-1.5 block">Género</label>
+                  <div className="relative">
+                    <select value={form.gender} onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value }))}
+                      className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background appearance-none focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)]">
+                      <option value="">Sin especificar</option>
+                      {GENDERS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-1.5 block">Rango de edad</label>
+                  <div className="relative">
+                    <select value={form.age_range} onChange={(e) => setForm((f) => ({ ...f, age_range: e.target.value }))}
+                      className="w-full border border-border rounded-xl px-4 py-2.5 text-sm text-foreground bg-background appearance-none focus:outline-none focus:ring-2 focus:ring-[var(--brand-red)]/20 focus:border-[var(--brand-red)]">
+                      <option value="">Sin especificar</option>
+                      {AGE_RANGES.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                    </select>
+                  </div>
+                </div>
               </div>
 
               <div>
@@ -348,6 +511,7 @@ export default function Clientes({ token, orgId }: ClientesProps) {
                 <a
                   href={contactClient.phone ? `https://wa.me/${cleanPhone(contactClient.phone)}?text=${encodeURIComponent(message)}` : undefined}
                   target="_blank" rel="noopener noreferrer"
+                  onClick={() => contactClient.phone && marcarContactado(contactClient.id, "whatsapp")}
                   className={`flex flex-col items-center gap-1.5 rounded-xl border border-border py-3 text-xs font-medium transition-colors ${
                     contactClient.phone ? "text-foreground hover:border-emerald-400 hover:bg-emerald-50" : "opacity-40 pointer-events-none"
                   }`}>
@@ -356,6 +520,7 @@ export default function Clientes({ token, orgId }: ClientesProps) {
                 </a>
                 <a
                   href={contactClient.email ? `mailto:${contactClient.email}?subject=${encodeURIComponent("Un saludo de " + orgName)}&body=${encodeURIComponent(message)}` : undefined}
+                  onClick={() => contactClient.email && marcarContactado(contactClient.id, "correo")}
                   className={`flex flex-col items-center gap-1.5 rounded-xl border border-border py-3 text-xs font-medium transition-colors ${
                     contactClient.email ? "text-foreground hover:border-blue-400 hover:bg-blue-50" : "opacity-40 pointer-events-none"
                   }`}>
@@ -365,6 +530,7 @@ export default function Clientes({ token, orgId }: ClientesProps) {
                 <a
                   href={contactClient.instagram ? `https://instagram.com/${contactClient.instagram.replace("@", "")}` : undefined}
                   target="_blank" rel="noopener noreferrer"
+                  onClick={() => contactClient.instagram && marcarContactado(contactClient.id, "instagram")}
                   className={`flex flex-col items-center gap-1.5 rounded-xl border border-border py-3 text-xs font-medium transition-colors ${
                     contactClient.instagram ? "text-foreground hover:border-pink-400 hover:bg-pink-50" : "opacity-40 pointer-events-none"
                   }`}>
